@@ -50,6 +50,7 @@ if not text_section.SizeOfRawData:
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
 md.detail = True
 ranges=[(0x86210,0x6ee),(0xd0880,0x2e),(0xcd00,0x11f),(0x41af0,0x130),(0x41c20,0x30c),(0x9e00,0x13)]
+ranges += [(0x15f6e8,0x6c),(0x1177d0,0x70f),(0x150090,0x110),(0x1501a0,0x6d0),(0x159880,0x30),(0x159c80,0x15d),(0x11fb60,0x85)]
 chunks=[]
 for rva,size in ranges:
     code=bytes(image[rva:rva+size])
@@ -65,7 +66,9 @@ for i,(rva,code,reloc) in enumerate(chunks):
     out.append(f'inline constexpr unsigned char bytes{i}[] = {{'+','.join(f'0x{b:02x}' for b in code)+'};')
     out.append(f'inline constexpr unsigned short reloc{i}[] = {{'+','.join(map(str,reloc or [0]))+'};')
 out.append('inline constexpr Range ranges[] = {')
-for i,(rva,code,reloc) in enumerate(chunks):out.append(f'{{0x{rva:x},{len(code)},bytes{i},reloc{i},{len(reloc)}}},')
+for i,(rva,code,reloc) in enumerate(chunks[:6]):out.append(f'{{0x{rva:x},{len(code)},bytes{i},reloc{i},{len(reloc)}}},')
+out+=['};','inline constexpr Range cursorRanges[] = {']
+for i,(rva,code,reloc) in enumerate(chunks[6:],6):out.append(f'{{0x{rva:x},{len(code)},bytes{i},reloc{i},{len(reloc)}}},')
 out+=['};','}']
 (ROOT/'src'/'client_profile.h').write_text('\n'.join(out)+'\n')
 print("Generated src/client_profile.h locally for the supported client.")

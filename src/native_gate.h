@@ -1,4 +1,4 @@
-// Resident-only gate: all native returns remain inside the pinned loader.
+// Native drawing gates live in the plugin; restored before normal DLL unload.
 __declspec(naked) void NameplateGate() {
     __asm {
         pushfd
@@ -36,7 +36,7 @@ __declspec(naked) void NameplateGate() {
 }
 
 // Damage entry: change only the caller's scale pair, then run native drawing.
-// No return address or continuation ever points into the reloadable engine.
+// Preserve the incoming machine state before continuing native drawing.
 __declspec(naked) void DamageGate() {
     __asm {
         pushfd

@@ -1,2 +1,0 @@
-#pragma once
-constexpr wchar_t NameplateRuntimeRoot[]=LR"(@CMAKE_CURRENT_SOURCE_DIR@/runtime)";

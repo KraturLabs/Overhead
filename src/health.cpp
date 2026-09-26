@@ -21,7 +21,7 @@ void dim(Quad& q) noexcept {
 }
 
 HealthFill MeasureHealth(const Output& output, unsigned percent) noexcept {
-    if (percent >= 100 || output.count > MaxGlyphs) return {};
+    if (percent >= 100 || output.count > MaxQuads) return {};
     float left = std::numeric_limits<float>::max(), right = -left;
     for (unsigned i = 0; i < output.count; ++i) {
         const auto& q = output.quads[i];
