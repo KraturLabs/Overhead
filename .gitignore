@@ -1,0 +1,7 @@
+/build/
+/dependencies/
+/runtime/
+/.venv/
+/src/client_profile.h
+__pycache__/
+*.pyc

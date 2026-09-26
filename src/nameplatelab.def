@@ -1,0 +1,5 @@
+LIBRARY nameplatelab
+EXPORTS
+    expCreatePlugin=_CreatePlugin@4
+    expDestroyPlugin=_DestroyPlugin@4
+    expGetInterfaceVersion=_InterfaceVersion@0
