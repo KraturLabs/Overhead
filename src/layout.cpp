@@ -162,6 +162,9 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     // Scale grows from the run's own baseline; shift moves it down in local units.
     // '%' is drawn smaller than the digits it follows, on the same baseline.
     constexpr float Symbol=.7f;
+    // Native overhead rendering doubles color and alpha modulation. Only the name
+    // follows the native target pulse (its alpha); every detail uses this fixed opacity.
+    constexpr std::uint32_t DetailAlpha=0x80000000u;
     const auto measure=[&](const char* text,unsigned length,float& width){
         width=0;
         for(unsigned i=0;i<length;++i){
@@ -172,7 +175,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         return length>0;
     };
     const auto write=[&](const char* text,unsigned length,std::uint32_t color,float scale,float pen,float shift,float alpha=1){
-        const auto opacity=static_cast<std::uint32_t>(static_cast<float>(in.nameColor>>24)*alpha)<<24;
+        const auto opacity=static_cast<std::uint32_t>(static_cast<float>(DetailAlpha>>24)*alpha)<<24;
         const auto& reference=in.glyphs[static_cast<unsigned char>(text[0])];
         const float baseline=static_cast<float>(reference.offsetY+reference.height);
         float leftmost=pen;
@@ -259,7 +262,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const float size=textReference->height*traits->scale;
         const float top=textReference->offsetY+(textReference->height-size)*.5f;
         float right=detailLeft-in.glyphs[32].width;
-        const auto alpha=in.nameColor&0xFF000000u;
+        const auto alpha=DetailAlpha;
         const auto first=out.count;
         const auto quad=[&](float left,float y,float width,float height,unsigned cell,std::uint32_t color){
             auto& q=out.quads[out.count++];
@@ -296,14 +299,12 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         float top=static_cast<float>(textReference->offsetY);
         for(unsigned i=0;i<out.count;++i)top=std::min(top,(out.quads[i].vertices[0].y-in.y)/in.scaleY);
         top-=size+2;
-        // Native overhead rendering doubles color and alpha modulation.
-        // Keep icon opacity fixed, independent of the nameplate fade.
         for(unsigned i=0;i<debuffs->count;++i){
             const auto cell=DebuffCell(debuffs->effects[i]);
             auto& q=out.quads[out.count++];q.code=0x300u+debuffs->effects[i];q.textureGroup=3;q.alphaReference=0;
             for(unsigned v=0;v<4;++v)q.vertices[v]={
                 in.x+in.scaleX*(left+i*(size+iconGap)+(v&1?size:0)),
-                in.y+in.scaleY*(top+(v&2?size:0)),in.z,1,0x80808080u,
+                in.y+in.scaleY*(top+(v&2?size:0)),in.z,1,DetailAlpha|0x808080u,
                 (cell%16*32+(v&1?31.5f:.5f))/512,(cell/16*32+(v&2?31.5f:.5f))/256};
         }
         mark(out.count-debuffs->count,ShowDebuffs);
