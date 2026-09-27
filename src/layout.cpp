@@ -195,12 +195,16 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         return leftmost;
     };
     if(level&&level->length&&level->length<=6&&nameCount&&validGlyph(in.glyphs[32])){
-        float width=0;
-        if(!measure(level->text,level->length,width))return true;
-        const float labelPen=iconStart-width*level->scale-in.glyphs[32].width;
+        // "Lv." is white like the distance at 60% size; only the number carries the color.
+        constexpr unsigned Prefix=3;constexpr float PrefixSize=.6f;
+        float prefixWidth=0,width=0;
+        if(level->length<=Prefix||!measure(level->text,Prefix,prefixWidth)
+            ||!measure(level->text+Prefix,level->length-Prefix,width))return true;
+        const float labelPen=iconStart-(prefixWidth*PrefixSize+width)*level->scale-in.glyphs[32].width;
         detailLeft=std::min(detailLeft,labelPen);
         const auto first=out.count;
-        detailLeft=std::min(detailLeft,write(level->text,level->length,level->color,level->scale,labelPen,0));
+        detailLeft=std::min(detailLeft,write(level->text,Prefix,0x808080u,level->scale*PrefixSize,labelPen,0));
+        write(level->text+Prefix,level->length-Prefix,level->color,level->scale,labelPen+prefixWidth*PrefixSize*level->scale,0);
         mark(first,ShowLevel);
     }
     if(labels&&nameCount&&validGlyph(in.glyphs[32])){
