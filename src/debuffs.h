@@ -23,7 +23,7 @@ constexpr unsigned DebuffCell(unsigned effect) noexcept {
     return effect<DebuffCells.size()?DebuffCells[effect]:~0u;
 }
 enum class DebuffChange { Add, Remove, Damage, Defeat };
-struct DebuffEvent { std::uint32_t target; DebuffChange change; unsigned effect; unsigned rank=0; };
+struct DebuffEvent { std::uint32_t target; DebuffChange change; unsigned effect; unsigned rank=0; unsigned duration=300; bool preserveLonger=false; };
 using DebuffSink=void(*)(void*,const DebuffEvent&);
 // Decode only combat results, not cast/readies. Never modify or block packets.
 void DecodeDebuffs(unsigned packet,const std::uint8_t* data,unsigned size,void* context,DebuffSink sink) noexcept;
@@ -38,7 +38,7 @@ class Debuffs {
 public:
     void Clear();
     void Forget(unsigned index,std::uint32_t id);
-    void Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned effect,std::uint32_t now,unsigned rank=0);
+    void Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned effect,std::uint32_t now,unsigned rank=0,unsigned duration=300,bool preserveLonger=false);
     DebuffRow Read(unsigned index,std::uint32_t id,std::uint32_t now) const noexcept;
 };
 }

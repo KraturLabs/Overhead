@@ -21,8 +21,8 @@
 #include "trait_texture.h"
 #include "debuff_texture.h"
 #include "options.h"
-#include "client_profile.h"
-#include "native_contract.h"
+#include "native_discovery.h"
+#include <vector>
 
 extern "C" {
 std::uintptr_t NameplateResume=0,NameplateExit=0,DamageResume=0;
@@ -49,22 +49,25 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
-constexpr auto HookRva=native_contract::NameHook;
-constexpr std::uint32_t SubmitRva=0xCD00, SubmitPrefixSize=7;
+native_discovery::Addresses native;
+std::uint32_t HookRva=0;
+std::uint32_t SubmitRva=0;
+constexpr std::uint32_t SubmitPrefixSize=7;
 std::atomic<bool> submissionDetoured{false};
 constexpr unsigned char Original[6]={0x33,0xD2,0x33,0xED,0x33,0xF6};
 std::uintptr_t clientBase=0;
-constexpr auto DamageRva=native_contract::DamageHook;
+std::uint32_t DamageRva=0;
 constexpr unsigned char DamageOriginal[6]={0x81,0xEC,0x24,0x03,0x00,0x00};
 unsigned char damagePatch[6]{};
 bool damageHooked=false,damageHookAttempted=false;
-constexpr auto CursorRva=native_contract::CursorCall;
-constexpr unsigned char CursorOriginal[5]={0xE8,0xA2,0x80,0xFB,0xFF};
+std::uint32_t CursorRva=0;
+unsigned char CursorOriginal[5]{};
 unsigned char cursorPatch[5]{};
 bool cursorHooked=false,cursorAttempted=false,cursorReady=false;
 std::atomic<bool> keepCursor{false};
 HMODULE retainedModule=nullptr; // Only a failed teardown retains code; normal unload frees the DLL.
 void ConfigureNative(std::uintptr_t base);
+bool DiscoverNative(std::uintptr_t base);
 CursorClearance cursorClearance[2]; // Only current-scene, actually drawn overhead content.
 
 
@@ -169,15 +172,15 @@ template<class T> T PacketValue(const std::uint8_t* data,unsigned offset) noexce
 }
 std::uint32_t LocalIdentity() noexcept {
     std::uint16_t index=0;std::uint32_t entity=0,id=0;
-    if(Read(clientBase+0x47D604,index)&&index&&index<0x900
-        &&Read(clientBase+0x480AF0+index*4,entity)&&entity)Read(entity+0x78,id);
+    if(Read(clientBase+native.playerIndex,index)&&index&&index<0x900
+        &&Read(clientBase+native.entities+index*4,entity)&&entity)Read(entity+0x78,id);
     return id;
 }
 bool CheckTarget(Ashita::FFXI::targetentry_t& target) noexcept {
     std::uint32_t controller=0,id=0,entity=0,flags=0;std::uint8_t hp=0;
-    return Read(clientBase+0x57876C,controller)&&controller
+    return Read(clientBase+native.targets,controller)&&controller
         &&Read(controller,target)&&target.IsActive&&target.ServerId&&target.Index<0x900
-        &&Read(clientBase+0x480AF0+target.Index*4,entity)&&entity&&entity==target.EntityPointer
+        &&Read(clientBase+native.entities+target.Index*4,entity)&&entity&&entity==target.EntityPointer
         &&Read(entity+0x78,id)&&id==target.ServerId
         &&Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),flags)
         &&(flags&EnemyFlag)&&!(flags&FriendlyFlags)
@@ -194,7 +197,7 @@ void RefreshDetailTarget() noexcept {
         ||(showDebuffs.load()&&(debuffsTargetOnly.load()||previewDebuffs.load())&&debuffTexture.value)||debuffCursor))return;
     std::uint32_t controller=0;
     Ashita::FFXI::targetentry_t target;
-    if(Read(clientBase+0x57876C,controller)&&controller&&Read(controller,target)&&target.IsActive)
+    if(Read(clientBase+native.targets,controller)&&controller&&Read(controller,target)&&target.IsActive)
         detailTarget={target.Index,target.ServerId};
     if(debuffCursor&&controller){
         sceneCursorTargets[0]=detailTarget;
@@ -232,7 +235,7 @@ void ReceiveDebuff(void* context,const DebuffEvent& event) {
     unsigned index=event.target&0xFFF;
     const auto matches=[&](unsigned slot,bool player){
         std::uint32_t entity=0,id=0,flags=0;
-        return slot<0x900&&Read(clientBase+0x480AF0+slot*4,entity)&&entity
+        return slot<0x900&&Read(clientBase+native.entities+slot*4,entity)&&entity
             &&Read(entity+0x78,id)&&id==event.target
             &&Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),flags)
             &&(player?(flags&1)!=0:((flags&EnemyFlag)&&!(flags&FriendlyFlags)));
@@ -248,7 +251,7 @@ void ReceiveDebuff(void* context,const DebuffEvent& event) {
             }
         if(!matches(index,true))return;
     }
-    debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank);
+    debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank,event.duration,event.preserveLonger);
 }
 bool Problem(const char* value) { strcpy_s(lastProblem,value); return false; }
 
@@ -274,40 +277,29 @@ bool ExchangeSite(const unsigned char* expected,const unsigned char* next,std::u
     return true;
 }
 
-bool Compatible() noexcept {
-    if(!clientBase)return Problem("FFXiMain.dll is not loaded");
-    for(const auto& range:client_profile::ranges){
-        // All compared bytes are populated below; no full-buffer clearing needed.
-        unsigned char expected[2048],actual[2048];
-        if(range.size>sizeof(expected))return Problem("internal profile size");
-        std::memcpy(expected,range.bytes,range.size);
-        for(unsigned i=0;i<range.relocationCount;++i){
-            std::uint32_t value=0;const auto off=range.relocations[i];
-            std::memcpy(&value,expected+off,4);
-            value+=static_cast<std::uint32_t>(clientBase)-0x10000000u;
-            std::memcpy(expected+off,&value,4);
-        }
-        if(hooked && range.rva<=HookRva && HookRva+6<=range.rva+range.size)
-            std::memcpy(expected+HookRva-range.rva,patch,6);
-        if(damageHooked && range.rva==DamageRva)std::memcpy(expected,damagePatch,6);
-        if(!ReadBytes(clientBase+range.rva,actual,range.size))return Problem("unreadable client name/render routine");
-        unsigned skip=0;
-        if(range.rva==SubmitRva){
-            // We execute our own verified prologue, so a seven-byte entry detour
-            // is outside our path. Every byte of the original body stays exact.
-            const bool native=std::memcmp(expected,actual,SubmitPrefixSize)==0;
-            const bool detour=actual[0]==0xE9&&actual[5]==0x90&&actual[6]==0x90;
-            if(!native&&!detour)return Problem("unsupported submission entry layout");
-            submissionDetoured.store(!native,std::memory_order_relaxed);
-            skip=SubmitPrefixSize;
-        }
-        if(std::memcmp(expected+skip,actual+skip,range.size-skip)!=0)
-            return Problem("unsupported or modified client name/render body");
+bool CheckNativeRange(unsigned index) noexcept {
+    const auto& pattern=native_discovery::patterns[index];
+    unsigned char actual[2048];
+    const auto rva=native.routines[index];
+    if(pattern.size>sizeof(actual)||!ReadBytes(clientBase+rva,actual,pattern.size))return false;
+    if(hooked&&index==0){if(std::memcmp(actual+HookRva-rva,patch,6))return false;std::memcpy(actual+HookRva-rva,Original,6);}
+    if(damageHooked&&index==4){if(std::memcmp(actual,damagePatch,6))return false;std::memcpy(actual,DamageOriginal,6);}
+    if(cursorHooked&&index==6){if(std::memcmp(actual+CursorRva-rva,cursorPatch,5))return false;std::memcpy(actual+CursorRva-rva,CursorOriginal,5);}
+    if(index==2){
+        const bool original=std::memcmp(actual,pattern.bytes,SubmitPrefixSize)==0;
+        if(!original&&!(actual[0]==0xE9&&actual[5]==0x90&&actual[6]==0x90))return false;
+        submissionDetoured.store(!original,std::memory_order_relaxed);
     }
+    if(index==7&&actual[0]!=0xE9&&std::memcmp(actual,pattern.bytes,5))return false;
+    return native_discovery::Matches(actual,pattern);
+}
+bool Compatible() noexcept {
+    if(!clientBase||!HookRva)return Problem("native routine discovery failed or ambiguous");
+    for(unsigned i=0;i<6;++i)if(!CheckNativeRange(i))return Problem("unsupported or modified native rendering contract");
     const unsigned char bases[6]={169,169,169,169,169,169},counts[6]={0,1,2,0,1,2};
-    unsigned char bytes[6]{};
-    if(!ReadBytes(clientBase+0x32D434,bytes,6)||std::memcmp(bytes,bases,6)!=0
-        ||!ReadBytes(clientBase+0x32D43C,bytes,6)||std::memcmp(bytes,counts,6)!=0)
+    unsigned char bytes[6];
+    if(!ReadBytes(clientBase+native.expansionBase,bytes,6)||std::memcmp(bytes,bases,6)
+        ||!ReadBytes(clientBase+native.expansionCount,bytes,6)||std::memcmp(bytes,counts,6))
         return Problem("unsupported icon expansion tables");
     return true;
 }
@@ -325,24 +317,7 @@ bool OwnsHooks() noexcept {
 
 bool InstallCursor() noexcept {
     const auto fail=[](const char* reason){strcpy_s(cursorProblem,reason);return false;};
-    for(const auto& range:client_profile::cursorRanges){
-        unsigned char expected[2048],actual[2048];
-        if(range.size>sizeof(expected))return fail("internal cursor profile size");
-        std::memcpy(expected,range.bytes,range.size);
-        for(unsigned i=0;i<range.relocationCount;++i){
-            const auto off=range.relocations[i];std::uint32_t value;
-            std::memcpy(&value,expected+off,4);value+=static_cast<std::uint32_t>(clientBase)-0x10000000u;
-            std::memcpy(expected+off,&value,4);
-        }
-        if(cursorHooked&&range.rva<=CursorRva&&CursorRva+5<=range.rva+range.size)
-            std::memcpy(expected+CursorRva-range.rva,cursorPatch,5);
-        if(!ReadBytes(clientBase+range.rva,actual,range.size))return fail("unreadable native cursor path");
-        // Observed shared-menu entry detour. We call that same entry, preserving
-        // its owner, rather than bypassing it. Validate the unchanged body once.
-        const unsigned skip=range.rva==native_contract::MenuDraw&&actual[0]==0xE9?5u:0u;
-        if(std::memcmp(expected+skip,actual+skip,range.size-skip))
-            return fail("unsupported or modified native cursor path");
-    }
+    for(unsigned i=6;i<13;++i)if(!CheckNativeRange(i))return fail("unsupported or modified native cursor contract");
     if(!cursorHooked&&!ExchangeSite(CursorOriginal,cursorPatch,CursorRva,5))return fail(lastProblem);
     cursorHooked=true;cursorReady=true;strcpy_s(cursorProblem,"ready");return true;
 }
@@ -360,7 +335,7 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
     Ashita::FFXI::targetentry_t targets[2];
     // The native gate already matched this menu's callback to the target window.
     if(!Read(menu+0xC,window)||!window||!ReadBytes(window,&state,sizeof(state))
-        ||!Read(clientBase+0x57876C,controller)||!controller
+        ||!Read(clientBase+native.targets,controller)||!controller
         ||!ReadBytes(controller,targets,sizeof(targets))||state.DeathFlag||state.m_AnkNum>=16)return 0;
     // Target identities change on selection/despawn. These are live-data checks,
     // confined to at most two arrows, not a scan of actors or names.
@@ -373,7 +348,7 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
     // Match the generic menu renderer's modal visibility gate before forcing a
     // hidden callback. Without this, forcing would bypass that native early exit.
     std::uint32_t modal=0,modalMenu=0;unsigned char modalActive=0,menuFlags=0;
-    if(!Read(clientBase+0x5781CC,modal)||!modal||!Read(modal+0x48,modalActive))return 0;
+    if(!Read(clientBase+native.modal,modal)||!modal||!Read(modal+0x48,modalActive))return 0;
     if(modalActive&&(!Read(modal+8,modalMenu)||!Read(menu+0x34,menuFlags)
         ||(modalMenu!=menu&&!(menuFlags&0x40))))return 0;
     const auto shape=state.m_pAnkShape[state.m_AnkNum];
@@ -385,7 +360,7 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
         // Name vertices use render-buffer pixels; cursor anchors use UI units.
         // Read the current dimensions here so live UI/resolution changes agree.
         std::uint32_t config=0;std::uint16_t dimensions[6];
-        if(!Read(clientBase+0x4568FC,config)||!config||!ReadBytes(config+0x10,dimensions,sizeof(dimensions))
+        if(!Read(clientBase+native.config,config)||!config||!ReadBytes(config+0x10,dimensions,sizeof(dimensions))
             ||!dimensions[2]||!dimensions[3]||!dimensions[4]||!dimensions[5])return 0;
         uiScaleX=static_cast<float>(dimensions[2])/dimensions[4];
         uiScaleY=static_cast<float>(dimensions[3])/dimensions[5];
@@ -398,7 +373,7 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
     auto* live=reinterpret_cast<Ashita::FFXI::targetwindow_t*>(window);
     if(mainLift)live->m_AnkY=static_cast<std::int16_t>((std::max)(-32768,static_cast<int>(state.m_AnkY)-mainLift));
     if(subLift)live->m_SubAnkY=static_cast<std::int16_t>((std::max)(-32768,static_cast<int>(state.m_SubAnkY)-subLift));
-    reinterpret_cast<void(__thiscall*)(std::uintptr_t)>(clientBase+native_contract::MenuDraw)(menu);
+    reinterpret_cast<void(__thiscall*)(std::uintptr_t)>(clientBase+native.menuDraw)(menu);
     if(!callbackVisible){DrawNativeCursorTail(window,targets[0].ActorPointer);++cursorDraws;}
     if(mainLift)live->m_AnkY=state.m_AnkY;
     if(subLift)live->m_SubAnkY=state.m_SubAnkY;
@@ -410,7 +385,7 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
 unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
     std::uint32_t caller=0,pair=0;
     float scales[2]{};
-    if(!Read(frame,caller)||caller!=clientBase+0x41C0F||!Read(frame+16,pair)
+    if(!Read(frame,caller)||caller!=clientBase+native.damageCaller||!Read(frame+16,pair)
         ||pair!=frame+0x38||!ReadBytes(pair,scales,sizeof(scales))
         ||!std::isfinite(scales[0])||!std::isfinite(scales[1])
         ||scales[0]<=0||scales[1]<=0||scales[0]>128||scales[1]>128){
@@ -440,14 +415,14 @@ struct Resources {
 bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons* icons=nullptr,bool showIcons=true) noexcept {
     if(icons)*icons={};
     std::uint32_t caller=0,actor=0,entity=0,identity=0,current=0;
-    if(!Read(frame+0x6D4,caller)||caller!=clientBase+0xD08A8 || !Read(frame+4,actor)
+    if(!Read(frame+0x6D4,caller)||caller!=clientBase+native.nameCaller || !Read(frame+4,actor)
         ||!Read(actor+0x70,entity)||!Read(entity+0x78,identity)||!identity)return false;
     std::uint16_t entityIndex=0;
     if(!Read(entity+0x74,entityIndex)||entityIndex>=0x900
-        ||!Read(clientBase+0x480AF0+entityIndex*4,current)||current!=entity)return false;
+        ||!Read(clientBase+native.entities+entityIndex*4,current)||current!=entity)return false;
     if(mode.load(std::memory_order_relaxed)==1){
         std::uint16_t playerIndex=0;
-        if(!Read(clientBase+0x47D604,playerIndex)||!playerIndex)return false;
+        if(!Read(clientBase+native.playerIndex,playerIndex)||!playerIndex)return false;
         if(entityIndex!=playerIndex){intentionallyFiltered=true;return false;}
     }
     std::uint32_t spawnFlags=0;
@@ -515,11 +490,11 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             if((icons->active&4)&&!Read(entity+offsetof(Ashita::FFXI::entity_t,LinkshellColor),icons->linkshellColor))return false;
         }
     }
-    if(!ReadBytes(clientBase+0x32D434,input.expansionBase,6)||!ReadBytes(clientBase+0x32D43C,input.expansionCount,6))return false;
+    if(!ReadBytes(clientBase+native.expansionBase,input.expansionBase,6)||!ReadBytes(clientBase+native.expansionCount,input.expansionCount,6))return false;
     std::uint8_t codes[MaxGlyphs];unsigned count=0,nameCount=0;
     if(!ExpandName(input,codes,count,nameCount,icons))return false;
     std::uint32_t fontData[12]{};
-    if(!ReadBytes(clientBase+0x4E1BF8,fontData,sizeof(fontData))||fontData[9]!=32||fontData[10]!=142)return false;
+    if(!ReadBytes(clientBase+native.font,fontData,sizeof(fontData))||fontData[9]!=32||fontData[10]!=142)return false;
     std::uint32_t table=0;
     if(!Read(fontData[11],table)||!table)return false;
     const auto loadGlyph=[&](std::uint8_t code){
@@ -567,7 +542,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     }
     if(resources.traits.bits&&!loadGlyph(32))resources.traits={};
     std::uint32_t graphics=0,device=0;
-    if(!Read(clientBase+0x45666C,graphics)||!graphics||!Read(graphics+0xC,device)||!device)return false;
+    if(!Read(clientBase+native.graphics,graphics)||!graphics||!Read(graphics+0xC,device)||!device)return false;
     resources.graphics=reinterpret_cast<void*>(graphics);resources.device=reinterpret_cast<IDirect3DDevice8*>(device);
     return true;
 }
@@ -580,7 +555,7 @@ struct SizingReference {
 bool ReadSizingReference(SizingReference& reference) noexcept {
     std::uint32_t config=0;
     std::uint16_t screen[2];
-    if(!Read(clientBase+0x4568FC,config)||!config||!ReadBytes(config+0x10,screen,sizeof(screen)))return false;
+    if(!Read(clientBase+native.config,config)||!config||!ReadBytes(config+0x10,screen,sizeof(screen)))return false;
     reference.screenWidth=screen[0];reference.screenHeight=screen[1];
     return OriginalWidth(reference.screenWidth,reference.screenHeight,reference.width);
 }
@@ -605,7 +580,7 @@ bool DrawingDeviceRecovered() noexcept {
     if(!nameFault.load()||(lastDrawFailure.error!=D3DERR_DEVICELOST
         &&lastDrawFailure.error!=D3DERR_DEVICENOTRESET))return false;
     std::uint32_t graphics=0,device=0;
-    return Read(clientBase+0x45666C,graphics)&&graphics&&Read(graphics+0xC,device)&&device
+    return Read(clientBase+native.graphics,graphics)&&graphics&&Read(graphics+0xC,device)&&device
         &&reinterpret_cast<IDirect3DDevice8*>(device)->TestCooperativeLevel()==D3D_OK;
 }
 struct FilterScope {
@@ -803,7 +778,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.905;}
+    double GetVersion()const override{return 0.907;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -829,7 +804,9 @@ public:
         const auto memory=core_->GetMemoryManager();
         const auto party=memory?memory->GetParty():nullptr;
         traitZone.store(party?party->GetMemberZone(0):0);
-        ConfigureNative(reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"FFXiMain.dll")));
+        const auto module=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"FFXiMain.dll"));
+        if(!DiscoverNative(module)){core_->GetChatManager()->Writef(207,false,"[NameplateLab] Refused: native routine discovery failed or ambiguous.");return false;}
+        ConfigureNative(module);
         if(!Compatible()){core_->GetChatManager()->Writef(207,false,"[NameplateLab] Refused: %s.",lastProblem);return false;}
         const char* root=core_->GetInstallPath();
         if(root&&_snprintf_s(settingsDirectory_,sizeof(settingsDirectory_),_TRUNCATE,"%s\\config\\nameplatelab",root)>=0
@@ -842,7 +819,7 @@ public:
         damageAdjusted.store(0);damageRejected.store(0);
         mode.store(0);requested.store(options_.mode);
         replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);filteredNames.store(0);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.9.5] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
+        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.9.7] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
         return true;
     }
     void Release()override{
@@ -1131,15 +1108,33 @@ extern "C" void __stdcall DestroyPlugin(void* instance){auto* plugin=static_cast
 extern "C" double __stdcall InterfaceVersion(){return ASHITA_INTERFACE_VERSION;}
 
 namespace {
+bool DiscoverNative(std::uintptr_t base) {
+    IMAGE_DOS_HEADER dos{};IMAGE_NT_HEADERS32 pe{};
+    if(!Read(base,dos)||dos.e_magic!=IMAGE_DOS_SIGNATURE||dos.e_lfanew<=0
+        ||!Read(base+dos.e_lfanew,pe)||pe.Signature!=IMAGE_NT_SIGNATURE
+        ||pe.OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR32_MAGIC)return false;
+    const unsigned size=pe.OptionalHeader.SizeOfImage;
+    if(size<4096)return false;
+    std::vector<unsigned char> image(size);
+    for(unsigned offset=0;offset<size;){
+        const auto count=(std::min)(0x1000u,size-offset);
+        ReadBytes(base+offset,image.data()+offset,count);
+        offset+=count;
+    }
+    native={};HookRva=0;
+    return native_discovery::Discover(image.data(),size,static_cast<std::uint32_t>(base),native);
+}
 void ConfigureNative(std::uintptr_t base) {
     clientBase=base;
+    HookRva=native.nameHook;DamageRva=native.damageHook;CursorRva=native.cursorCall;SubmitRva=native.submit;
+    ReadBytes(base+CursorRva,CursorOriginal,5);
     const auto nameGateAddress=reinterpret_cast<std::uintptr_t>(&NameplateGate);
     const auto damageGateAddress=reinterpret_cast<std::uintptr_t>(&DamageGate);
     const auto cursorGateAddress=reinterpret_cast<std::uintptr_t>(&CursorMenuGate);
-    NameplateResume=base+native_contract::NameResume;NameplateExit=base+native_contract::NameExit;
-    DamageResume=base+native_contract::DamageResume;
-    MenuDrawAddress=base+native_contract::MenuDraw;TargetWindowAddress=base+0x578478;
-    CursorTailAddress=base+0x1504B6;NameplateSubmitResume=base+SubmitRva+SubmitPrefixSize;
+    NameplateResume=base+native.nameResume;NameplateExit=base+native.nameExit;
+    DamageResume=base+native.damageResume;
+    MenuDrawAddress=base+native.menuDraw;TargetWindowAddress=base+native.targetWindow;
+    CursorTailAddress=base+native.cursorTail;NameplateSubmitResume=base+SubmitRva+SubmitPrefixSize;
     patch[0]=0xE9;patch[5]=0x90;
     damagePatch[0]=0xE9;damagePatch[5]=0x90;cursorPatch[0]=0xE8;
     const auto nameOffset=static_cast<std::uint32_t>(nameGateAddress-(base+HookRva+5));
