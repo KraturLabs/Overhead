@@ -33,6 +33,10 @@ struct Options {
     bool friendlyHealth = false; // Deplete your own and party/alliance names by HP.
     bool unclaimedDamagedOnly = false; // Unclaimed row only once the monster is damaged.
     float labelScale = 1, actionScale = .6f; // HP%/distance and action sizes.
+    bool scrollXp = false; // Experimental: gained points drift from your name.
+    bool xpUp = false; // Drift up from above the name instead of down.
+    bool growTarget = false; // Experimental: control the selected target plate's distant size.
+    float growFarSize = 1; // Readability floor at 20 yalms, relative to native full size.
     float damageScale = 1, damageWidth = 1;
     bool damageEnabled = false, damageCorrectAspect = false;
     unsigned mode = 3;   // All supported names plus enemy HP, by default.
@@ -42,6 +46,9 @@ bool ValidOptions(const Options& value) noexcept;
 // Settings are validated at input boundaries; drawing validates live scales and results.
 bool SizeScale(float& scaleX,float& scaleY,const Options& options) noexcept;
 bool SizeName(Input& input, const Options& options) noexcept;
+// Fade added distant readability to zero by 3 yalms; never shrink native size.
+float GrowFactor(float nativeFactor, float distance, float farSize) noexcept;
+bool GrowName(Input& input, float factor) noexcept;
 bool OriginalWidth(unsigned screenWidth, unsigned screenHeight, float& width) noexcept;
 bool ApplyOriginalSizing(Options& options, unsigned screenWidth, unsigned screenHeight) noexcept;
 bool ApplyDamageSizing(Options& options, unsigned screenWidth, unsigned screenHeight) noexcept;

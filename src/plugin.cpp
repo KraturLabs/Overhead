@@ -18,6 +18,7 @@
 #include "health.h"
 #include "levels.h"
 #include "actions.h"
+#include "xp.h"
 #include "traits.h"
 #include "trait_texture.h"
 #include "debuff_texture.h"
@@ -50,7 +51,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
-constexpr char Version[]="0.9.13";
+constexpr char Version[]="0.9.18";
 // Native icon expansion tables; setup requires exactly these values before any hook.
 constexpr unsigned char ExpansionBase[6]={169,169,169,169,169,169},ExpansionCount[6]={0,1,2,0,1,2};
 native_discovery::Addresses native;
@@ -124,7 +125,11 @@ DebuffRow StatusDebuffs(const std::uint8_t* statuses,std::uint64_t mask) noexcep
     return StatusDebuffs(decoded);
 }
 std::atomic<unsigned> debuffSize{16};
-std::uint32_t sceneSeconds=0;
+std::uint32_t sceneSeconds=0,sceneMillis=0;
+XpFeed xpFeed;
+std::atomic<bool> scrollXp{false},xpUp{false};
+std::atomic<bool> growTarget{false};
+std::atomic<float> growFarSize{1};
 Actions actions;
 std::atomic<float> labelScale{1},actionScale{.6f};
 Levels levels;
@@ -138,7 +143,8 @@ void PublishVisuals(const Options& options) noexcept {
     autoCheck=options.autoCheck;levelScale=options.levelScale;traitScale=options.traitScale;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row)rowFeatures[row]=options.rows[row];
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;
-    labelScale=options.labelScale;actionScale=options.actionScale;
+    labelScale=options.labelScale;actionScale=options.actionScale;scrollXp=options.scrollXp;xpUp=options.xpUp;
+    growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
     damageCorrectAspect.store(options.damageCorrectAspect);
     damageScale.store(options.damageScale);damageWidth.store(options.damageWidth);
@@ -483,6 +489,7 @@ struct Resources {
     DebuffRow debuffs;
     SideLabels labels;
     DetailTarget identity;
+    float grow = 1; // Selected target's distance enlargement.
 };
 bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons* icons=nullptr,bool showIcons=true) noexcept {
     if(icons)*icons={};
@@ -599,11 +606,21 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         number(resources.labels.mp,static_cast<unsigned>(sceneMembers[member].mp),0x4E734Eu,true);
     if(member<18&&(features&ShowTp)&&sceneMembers[member].tp<=3000)
         number(resources.labels.tp,sceneMembers[member].tp/10,0x466478u,true);
-    if(features&ShowDistance){
+    const bool enlarge=selected&&member!=0&&singleLine&&growTarget.load(std::memory_order_relaxed);
+    if((features&ShowDistance)||enlarge){
         float squared=0;
         if(Read(entity+offsetof(Ashita::FFXI::entity_t,Distance),squared)&&squared>=0&&squared<1e6f){
-            const auto tenths=static_cast<unsigned>(std::sqrt(squared)*10+.5f);
-            if(tenths&&tenths<10000){ // Hidden at 0.0.
+            const float distance=std::sqrt(squared);
+            if(enlarge){
+                // The setup-validated native routine multiplies both scales by
+                // this stack argument. Use it to add only missing readability;
+                // the addition fades to zero nearby, with no timer.
+                float nativeFactor=0;
+                if(Read(frame+0x6E0,nativeFactor))
+                    resources.grow=GrowFactor(nativeFactor,distance,growFarSize.load(std::memory_order_relaxed));
+            }
+            const auto tenths=static_cast<unsigned>(distance*10+.5f);
+            if((features&ShowDistance)&&tenths&&tenths<10000){ // Hidden at 0.0.
                 auto& label=resources.labels.distance;
                 number(label,tenths/10,0x808080u,false);
                 label.text[label.length++]='.';
@@ -616,6 +633,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     if(preview)resources.labels.action={10,"Thunder IV",ActionColor(sceneSeconds%3)};
     resources.labels.scale=labelScale.load(std::memory_order_relaxed);
     resources.labels.actionScale=actionScale.load(std::memory_order_relaxed);
+    if(member==0&&singleLine&&scrollXp.load(std::memory_order_relaxed)){xpFeed.Read(resources.labels.floating,sceneMillis);resources.labels.floatUp=xpUp.load(std::memory_order_relaxed);}
     if(icons&&(spawnFlags&1)&&singleLine){
         icons->replace=true;
         if(showIcons){
@@ -683,6 +701,12 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         bool ready=!label->length||loadGlyph(32);
         for(unsigned i=0;ready&&i<label->length;++i)ready=loadGlyph(static_cast<std::uint8_t>(label->text[i]));
         if(!ready)*label={};
+    }
+    for(auto& floating:resources.labels.floating){
+        auto& label=floating.text;
+        bool ready=!label.length||loadGlyph(32);
+        for(unsigned i=0;ready&&i<label.length;++i)ready=loadGlyph(static_cast<std::uint8_t>(label.text[i]));
+        if(!ready)floating={};
     }
     std::uint32_t graphics=0,device=0;
     if(!Read(clientBase+native.graphics,graphics)||!graphics||!Read(graphics+0xC,device)||!device)return false;
@@ -808,7 +832,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
         DebuffBounds bounds;
         const auto visuals=Visuals();
         intentionallyFiltered=false;
-        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)
+        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&GrowName(input,resources.grow)
             &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds,&resources.labels)){
             // Once drawing starts, do not redraw the original on top of a partial
             // replacement. A device error turns the feature off for future names.
@@ -888,6 +912,7 @@ public:
             levels.Clear();
             debuffs.Clear();
             actions.Clear();
+            xpFeed.Clear();
             traitZone.store(id==0x00A&&size>=0x32?PacketValue<std::uint16_t>(data,0x30):0);
             return false;
         }
@@ -906,6 +931,15 @@ public:
                 core_?core_->GetResourceManager():nullptr};
             DecodeDebuffs(id,data,size,&context,ReceiveDebuff);
             if(AnyRows(ShowAction))DecodeActions(id,data,size,&context,ReceiveAction);
+        }
+        // Points you gained: sender and target are both you (charutils AddExperiencePoints).
+        if(id==0x02D&&!blocked&&size>=0x1A&&scrollXp.load()){
+            bool chain=false;
+            const auto kind=XpMessageKind(PacketValue<std::uint16_t>(data,0x18)&0x7FFF,chain);
+            const auto self=LocalIdentity();
+            if(kind&&self&&PacketValue<std::uint32_t>(data,4)==self&&PacketValue<std::uint32_t>(data,8)==self)
+                xpFeed.Add(kind,PacketValue<std::uint32_t>(data,0x10),chain?PacketValue<std::uint32_t>(data,0x14):0,
+                    static_cast<std::uint32_t>(GetTickCount64()));
         }
         // Widescan entries: target index +4, signed level +6. No identity; the
         // index is cleared on despawn and zoning.
@@ -940,7 +974,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.913;}
+    double GetVersion()const override{return 0.918;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -964,6 +998,7 @@ public:
         levels.Clear();
         debuffs.Clear();
         actions.Clear();
+        xpFeed.Clear();
         const auto memory=core_->GetMemoryManager();
         const auto party=memory?memory->GetParty():nullptr;
         traitZone.store(party?party->GetMemberZone(0):0);
@@ -1011,6 +1046,7 @@ public:
         if(detached){traitTexture.Release();debuffTexture.Release();}
         debuffs.Clear();
         actions.Clear();
+        xpFeed.Clear();
         core_=nullptr;owns_=false;instances.store(0);
     }
     bool HandleCommand(std::int32_t,const char* command,bool injected)override{
@@ -1035,6 +1071,15 @@ public:
                     options_.rows[row]=_stricmp(setting,"on")==0?options_.rows[row]|(column&RowColumns[row]):options_.rows[row]&~column;
                 ChangedVisuals();
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] levels | traits | debuffs | health | mp | tp | distance | actions on | off");
+        }
+        else if(_strnicmp(option,"xp ",3)==0){
+            if(_stricmp(option+3,"on")==0||_stricmp(option+3,"off")==0){options_.scrollXp=_stricmp(option+3,"on")==0;ChangedVisuals();}
+            else if(_stricmp(option+3,"up")==0||_stricmp(option+3,"down")==0){options_.xpUp=_stricmp(option+3,"up")==0;ChangedVisuals();}
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] xp on | off | up | down");
+        }
+        else if(_strnicmp(option,"grow ",5)==0){
+            if(_stricmp(option+5,"on")==0||_stricmp(option+5,"off")==0){options_.growTarget=_stricmp(option+5,"on")==0;ChangedVisuals();}
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] grow on | off");
         }
         else if(_strnicmp(option,"hidetarget ",11)==0){
             if(_stricmp(option+11,"on")==0||_stricmp(option+11,"off")==0){
@@ -1095,7 +1140,7 @@ public:
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions on|off | damage <setting> | reset | status");
+        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off|up|down | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -1224,6 +1269,20 @@ public:
             if(FAILED(debuffTextureResult))gui->TextUnformatted("Debuff artwork unavailable; reload the plugin to try again.");
             gui->EndTabItem();
             }
+            if(gui->BeginTabItem("Experimental")){
+            changed=gui->Checkbox("Scrolling XP from your name",&options_.scrollXp)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Experience, limit, capacity and exemplar points you gain drift from your name and fade over 3 seconds. Uses the label size.");
+            changed=gui->Checkbox("Drift XP upward",&options_.xpUp)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Off: starts below your name and drifts down. On: starts above it and rises.");
+            gui->Separator();
+            changed=gui->Checkbox("Enlarge distant target",&options_.growTarget)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Extra enlargement fades out as you approach. Within 3 yalms the plate is exactly its ordinary size; at 20 yalms it is raised to Distant size only if needed. Your Size and Width settings still apply.");
+            float growSize=options_.growFarSize*100;
+            if(gui->SliderFloat("Distant size",&growSize,25,100,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.growFarSize=growSize/100;changed=true;}
+            if(gui->IsItemHovered())gui->SetTooltip("Readability size at 20 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
+            if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
+            gui->EndTabItem();
+            }
             gui->EndTabBar();
             }
             if(changed)ChangedVisuals();
@@ -1239,7 +1298,8 @@ public:
         // thread before installing hooks, not the device initialization caller.
         if(!renderThread_)renderThread_=GetCurrentThreadId();
         RefreshDetailTarget();
-        sceneSeconds=static_cast<std::uint32_t>(GetTickCount64()/1000);
+        const auto tick=GetTickCount64();
+        sceneSeconds=static_cast<std::uint32_t>(tick/1000);sceneMillis=static_cast<std::uint32_t>(tick);
         if(requested.load())RefreshScene(core_?core_->GetMemoryManager():nullptr);
         else for(auto& entry:sceneMembers)entry={};
         cursorClearance[0]={};cursorClearance[1]={};

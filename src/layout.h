@@ -5,8 +5,10 @@ namespace nameplate_lab {
 constexpr unsigned MaxGlyphs = 36;
 constexpr unsigned MaxDebuffs = 32;
 constexpr unsigned MaxLabel = 31; // Action names; HP% and distance are shorter.
-// Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5) and an action name.
-constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + MaxLabel;
+constexpr unsigned MaxFloating = 3, MaxFloatText = 20; // Gained points below your name.
+// Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5), an action name
+// and the floating point gains.
+constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + MaxLabel + MaxFloating*MaxFloatText;
 struct DebuffRow {
     unsigned count=0;
     std::uint16_t effects[MaxDebuffs]{};
@@ -29,8 +31,15 @@ struct TextLabel {
     char text[MaxLabel+1]{};
     std::uint32_t color=0; // Half-intensity RGB under native doubled modulation.
 };
+// Centered below the name: drop in name heights, alpha 0-1 over the name's own.
+struct FloatingLabel {
+    TextLabel text;
+    float drop=0, alpha=0;
+};
 struct SideLabels {
     TextLabel health, mp, tp, distance, action;
+    FloatingLabel floating[MaxFloating];
+    bool floatUp=false; // Floating labels rise from above the name instead.
     float scale=1, actionScale=.6f; // User factors relative to the name size.
 };
 struct Glyph {

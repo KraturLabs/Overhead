@@ -1,5 +1,6 @@
 #include "options.h"
 #include <Windows.h>
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -27,7 +28,22 @@ bool ValidOptions(const Options& v) noexcept {
         &&std::isfinite(v.labelScale)&&v.labelScale>=.25f&&v.labelScale<=3
         &&std::isfinite(v.actionScale)&&v.actionScale>=.25f&&v.actionScale<=3
         &&std::isfinite(v.damageScale)&&v.damageScale>=.25f&&v.damageScale<=3
-        &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3;
+        &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3
+        &&std::isfinite(v.growFarSize)&&v.growFarSize>=.25f&&v.growFarSize<=1;
+}
+float GrowFactor(float nativeFactor,float distance,float farSize) noexcept {
+    // Native factor is live stack data; zero cannot be divided out. Leave this
+    // name unchanged if it is unavailable, rather than disabling the feature.
+    if(!std::isfinite(nativeFactor)||nativeFactor<=0)return 1;
+    const float t=std::clamp((distance-3.f)/17.f,0.f,1.f);
+    const float extra=(std::max)(farSize/nativeFactor-1,0.f);
+    return 1+extra*t*t*(3-2*t);
+}
+bool GrowName(Input& input,float factor) noexcept {
+    if(factor==1)return true;
+    const float x=input.scaleX*factor,y=input.scaleY*factor;
+    if(!std::isfinite(x)||!std::isfinite(y)||x<=0||y<=0||x>128||y>128)return false;
+    input.scaleX=x;input.scaleY=y;return true;
 }
 bool SizeScale(float& scaleX,float& scaleY,const Options& v) noexcept {
     if (!std::isfinite(scaleX)||!std::isfinite(scaleY)
@@ -84,6 +100,14 @@ Options LoadOptions(const char* path) noexcept {
     out.debuffSize=debuffSize>=8?debuffSize:16;
     out.unclaimedDamagedOnly=readChoice("UnclaimedDamagedOnly",0,1)!=0;
     out.friendlyHealth=readChoice("FriendlyHealth",0,1)!=0;
+    out.scrollXp=readChoice("ScrollXp",0,1)!=0;
+    out.xpUp=readChoice("XpUp",0,1)!=0;
+    out.growTarget=readChoice("GrowTarget",0,1)!=0;
+    {
+        float farSize=1;
+        GetPrivateProfileStringA("Nameplates","GrowFarSize","1",text,sizeof(text),path);
+        if(ParseFactor(text,farSize))out.growFarSize=(std::min)(farSize,1.f);
+    }
     static constexpr const char* RowKeys[RowCount]={"RowTarget","RowSelf","RowParty","RowClaimedSelf","RowClaimedParty","RowClaimedOther","RowUnclaimed"};
     if(readChoice(RowKeys[0],1024,1023)==1024){
         // Earlier per-detail toggles; their defaults produce DefaultRows.
@@ -132,14 +156,17 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     char labelScale[32]{},actionScale[32]{};
     const auto xs=std::to_chars(labelScale,labelScale+sizeof(labelScale)-1,value.labelScale);
     const auto as=std::to_chars(actionScale,actionScale+sizeof(actionScale)-1,value.actionScale);
-    if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{}||ts.ec!=std::errc{}||xs.ec!=std::errc{}||as.ec!=std::errc{})return false;
-    char content[1024]{};
+    char growFarSize[32]{};
+    const auto gm=std::to_chars(growFarSize,growFarSize+sizeof(growFarSize)-1,value.growFarSize);
+    if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{}||ts.ec!=std::errc{}||xs.ec!=std::errc{}||as.ec!=std::errc{}||gm.ec!=std::errc{})return false;
+    char content[1280]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nTraitScale=%s\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nLabelScale=%s\r\nActionScale=%s\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nTraitScale=%s\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nLabelScale=%s\r\nActionScale=%s\r\nScrollXp=%u\r\nXpUp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,levelScale,traitScale,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
-        value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.friendlyHealth?1u:0u,labelScale,actionScale);
+        value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.friendlyHealth?1u:0u,labelScale,actionScale,value.scrollXp?1u:0u,value.xpUp?1u:0u,
+        value.growTarget?1u:0u,growFarSize);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

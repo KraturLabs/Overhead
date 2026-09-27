@@ -1,6 +1,6 @@
 # NameplateLab
 
-An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.13**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
+An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.18**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
 
 ## Features
 
@@ -12,6 +12,8 @@ An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. C
 - Opt-in native overhead cursor when an addon hides the target panel; keeps the game's arrow animation and main/subtarget colors.
 - Monster levels beside the name, colored by the observed check difficulty. Unknown levels stay hidden; confirmed impossible-to-gauge monsters show magenta `Lv.???`. Automatic checks are silent; manual `/check` output remains visible. Display and automatic checking have separate saved toggles, both on by default.
 - Monster detection/linking icons and an aggression strip to the left of the level/name. True sight, sight, sound, magic, job ability, blood and link; true sight replaces ordinary sight. Red means aggressive, blue means passive, and unknown data stays hidden. These are database defaults, not current hostility; private-server behavior may differ.
+- Experimental distant-target enlargement: a 25-100% readability size at 20 yalms, with extra enlargement fading completely by 3 yalms. Nearby plates keep their ordinary size. Toggle with `/nplab grow on|off`.
+- Experimental scrolling XP, LP, CP and EP gains anchored to your own name, including chains. Up to three entries drift and fade over three seconds; choose upward or downward motion with `/nplab xp up|down`, and toggle with `/nplab xp on|off`.
 - Saved settings; update in game with unload, replace the DLL, then load.
 - Monster HP% after the name, colored by FFXI's HP warning bands, then distance in yalms. Both default to the current target only.
 - Action names under the name while enemies ready abilities or cast, and for your own, party and alliance casts, weapon skills and job abilities. The result stays six seconds: green for success, red for interrupted, missed or resisted.

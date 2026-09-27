@@ -153,7 +153,8 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         }
         return length>0;
     };
-    const auto write=[&](const char* text,unsigned length,std::uint32_t color,float scale,float pen,float shift){
+    const auto write=[&](const char* text,unsigned length,std::uint32_t color,float scale,float pen,float shift,float alpha=1){
+        const auto opacity=static_cast<std::uint32_t>(static_cast<float>(in.nameColor>>24)*alpha)<<24;
         const auto& reference=in.glyphs[static_cast<unsigned char>(text[0])];
         const float baseline=static_cast<float>(reference.offsetY+reference.height);
         float leftmost=pen;
@@ -169,7 +170,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 q.vertices[v]={
                     in.x+in.scaleX*(pen+size*(g.offsetX+(v&1?g.width:0))),
                     in.y+in.scaleY*(shift+baseline+size*(g.offsetY+(v&2?g.height:0)-baseline)),in.z,1,
-                    (in.nameColor&0xFF000000u)|color,g.uv[v*2],g.uv[v*2+1]};
+                    opacity|color,g.uv[v*2],g.uv[v*2+1]};
             }
             pen+=g.width*size;
         }
@@ -196,6 +197,12 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         if(textReference&&labels->action.length<=MaxLabel&&measure(labels->action.text,labels->action.length,width))
             write(labels->action.text,labels->action.length,labels->action.color,labels->actionScale,
                 end-width*labels->actionScale,textReference->height*.3f);
+        for(const auto& floating:labels->floating){
+            const auto& label=floating.text;
+            if(label.length>MaxFloatText||!(floating.alpha>0)||!measure(label.text,label.length,width))continue;
+            write(label.text,label.length,label.color,labels->scale,start+(total-width*labels->scale)*.5f,
+                (labels->floatUp?-textReference->height*(1.f+floating.drop):textReference->height*(1.2f+floating.drop))*labels->scale,floating.alpha<1?floating.alpha:1);
+        }
     }
     if(traits&&traits->bits&&textReference&&validGlyph(in.glyphs[32])){
         const float size=textReference->height*traits->scale;
