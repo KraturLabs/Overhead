@@ -257,33 +257,38 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             write(label.text,label.length,label.color,labels->scale,next,0);next+=width*labels->scale+space;
             mark(first,bit);
         };
-        single(labels->health,4,ShowHealth);
-        // MP stacks over TP within the name's height with a small gap, nudged
-        // slightly down; either alone uses a fixed 65% size.
-        float mpWidth=0,tpWidth=0;
-        const bool hasMp=labels->mp.length<=4&&measure(labels->mp.text,labels->mp.length,mpWidth);
-        const bool hasTp=labels->tp.length<=4&&measure(labels->tp.text,labels->tp.length,tpWidth);
-        if(hasMp&&hasTp&&textReference){
-            const float breath=.1f,size=(1-breath)*.5f,drop=.05f;
+        // HP over MP over TP in one column centered on the name's middle, nudged down 5%:
+        // three at 35% of the name height with 3% gaps, two at 46.5%, both around the same centre.
+        // A lone value sits on the name's baseline at 60%.
+        if(textReference){
             const float height=static_cast<float>(textReference->height);
-            auto first=out.count;
-            write(labels->tp.text,labels->tp.length,labels->tp.color,size,next,drop*height);mark(first,ShowTp);
-            first=out.count;
-            write(labels->mp.text,labels->mp.length,labels->mp.color,size,next,(drop-size-breath)*height);mark(first,ShowMp);
-            next+=std::max(mpWidth,tpWidth)*size+space;
-        }else for(const auto* label:{&labels->mp,&labels->tp}){
-            if(label->length>4||!measure(label->text,label->length,width))continue;
-            const auto first=out.count;
-            write(label->text,label->length,label->color,.65f,next,0);next+=width*.65f+space;
-            mark(first,label==&labels->mp?ShowMp:ShowTp);
+            const TextLabel* present[3]{};float widths[3]{};unsigned bits[3]{},rowCount=0;
+            const struct{const TextLabel* label;unsigned bit;} rows[3]={
+                {&labels->health,ShowHealth},{&labels->mp,ShowMp},{&labels->tp,ShowTp}};
+            for(const auto& row:rows)
+                if(row.label->length<=4&&measure(row.label->text,row.label->length,widths[rowCount])){
+                    present[rowCount]=row.label;bits[rowCount++]=row.bit;
+                }
+            constexpr float RowGap=.03f,Offset=.05f,Three=.35f,Two=.465f,Single=.6f;
+            float top=Offset-(rowCount==2?2*Two+RowGap:3*Three+2*RowGap)*.5f,column=0; // Name heights from the name's middle.
+            for(unsigned i=0;i<rowCount;++i){
+                const float size=rowCount==1?Single:rowCount==2?Two:Three;
+                const auto first=out.count;
+                write(present[i]->text,present[i]->length,present[i]->color,size,next,rowCount==1?0:(top+size-.5f)*height);
+                mark(first,bits[i]);
+                column=std::max(column,widths[i]*size);
+                top+=size+RowGap;
+            }
+            if(column>0)next+=column+space*.5f; // Distance follows half a space after the column.
         }
         single(labels->distance,5,ShowDistance);
         if(textReference&&labels->action.length<=MaxLabel&&measure(labels->action.text,labels->action.length,width)){
             const auto first=out.count;
             write(labels->action.text,labels->action.length,labels->action.color,labels->actionScale,
-                end-width*labels->actionScale,textReference->height*.3f);
+                end-width*labels->actionScale,textReference->height*.2f);
             mark(first,ShowAction);
         }
+        constexpr float XpSize=.4f; // Scrolling points keep their own size, independent of distance.
         for(const auto& floating:labels->floating){
             const auto& label=floating.text;
             if(label.length>MaxFloatText||!(floating.alpha>0))continue;
@@ -293,19 +298,19 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             const unsigned unitStart=floating.unitStart<label.length?floating.unitStart:label.length;
             const unsigned superStart=floating.superLength&&floating.superStart+floating.superLength<=unitStart?floating.superStart:unitStart;
             const unsigned ends[4]={superStart,superStart+(superStart<unitStart?floating.superLength:0),unitStart,label.length};
-            const float runSizes[4]={labels->scale,labels->scale*SubSize,labels->scale,labels->scale*UnitSize};
+            const float runSizes[4]={XpSize,XpSize*SubSize,XpSize,XpSize*UnitSize};
             float widths[4]{};bool ok=true;
             for(unsigned r=0,from=0;r<4;from=ends[r++])
                 if(ends[r]>from&&!measure(label.text+from,ends[r]-from,widths[r]))ok=false;
             if(!ok)continue;
             width=0;for(unsigned r=0;r<4;++r)width+=widths[r]*runSizes[r];
-            const float shift=(labels->floatUp?-textReference->height*(1.f+floating.drop):textReference->height*(1.2f+floating.drop))*labels->scale;
+            const float shift=textReference->height*(1.2f+floating.drop)*XpSize;
             const auto first=out.count;
             float runPen=start+(total-width)*.5f;
             for(unsigned r=0,from=0;r<4;from=ends[r++]){
                 if(ends[r]==from)continue;
                 write(label.text+from,ends[r]-from,label.color,runSizes[r],runPen,
-                    shift+textReference->height*labels->scale*(r==1?SubDrop:r==3?-UnitRise:0.f),floating.alpha<1?floating.alpha:1);
+                    shift+textReference->height*XpSize*(r==1?SubDrop:r==3?-UnitRise:0.f),floating.alpha<1?floating.alpha:1);
                 runPen+=widths[r]*runSizes[r];
             }
             // Scrolling point gains always draw on top.
@@ -329,10 +334,10 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             }
         };
         if(traits->bits&AggroKnown){
-            // Quiet separator: one local pixel wide, three quarters of the
-            // name height. Its size/position does not follow either detail slider.
-            const float height=textReference->height*.75f;
-            const float y=textReference->offsetY+(textReference->height-height)*.5f;
+            // Quiet separator: one local pixel wide, 56% of the name height, centered
+            // like the HP/MP/TP column (cell middle nudged down 5%). Not slider-sized.
+            const float height=textReference->height*.5625f;
+            const float y=textReference->offsetY+(textReference->height-height)*.5f+textReference->height*.05f;
             quad(right-2,y-.5f,2,height+1,7,alpha);
             // Half-intensity tint preserves the intended red/blue under native 2x modulation.
             quad(right-1.5f,y,1,height,7,alpha|((traits->bits&Aggressive)?0x6C3C3Cu:0x3C4F62u));

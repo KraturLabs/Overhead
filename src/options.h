@@ -28,17 +28,14 @@ struct Options {
     bool hideTarget = false; // Hide the game's target window ourselves; HideParty optional.
     bool showStatusIcons = true; // Native player-name icon prefix, detached left of the name.
     bool autoCheck = true;
-    float levelScale = 1;
-    float traitScale = 1;
     unsigned debuffSize = 16;
     unsigned rows[RowCount] = {DefaultRows[0],DefaultRows[1],DefaultRows[2],DefaultRows[3],DefaultRows[4],DefaultRows[5],DefaultRows[6]};
     unsigned front[RowCount] = {DefaultFront[0],DefaultFront[1],DefaultFront[2],DefaultFront[3],DefaultFront[4],DefaultFront[5],DefaultFront[6]};
     bool friendlyHealth = false; // Deplete your own and party/alliance names by HP.
     bool npcFeatures = false; // NPCs keep the native plate unless on.
     bool unclaimedDamagedOnly = false; // Unclaimed row only once the monster is damaged.
-    float labelScale = 1, actionScale = .6f; // HP%/distance and action sizes.
+    float actionScale = .6f; // Action size.
     bool scrollXp = false; // Experimental: gained points drift from your name.
-    bool xpUp = false; // Drift up from above the name instead of down.
     bool growTarget = false; // Experimental: control the selected target plate's distant size.
     float growFarSize = 1; // Readability floor at 20 yalms, relative to native full size.
     float damageScale = 1, damageWidth = 1;

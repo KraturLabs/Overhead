@@ -44,7 +44,6 @@ struct FloatingLabel {
 struct SideLabels {
     TextLabel health, mp, tp, distance, action;
     FloatingLabel floating[MaxFloating];
-    bool floatUp=false; // Floating labels rise from above the name instead.
     float scale=1, actionScale=.6f; // User factors relative to the name size.
     // Parts drawn over world geometry, as DetailColumn bits; RowShow is the name.
     unsigned front=0;

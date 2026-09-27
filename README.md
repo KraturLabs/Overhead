@@ -12,8 +12,8 @@ An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. C
 - Opt-in native overhead cursor when an addon hides the target panel; keeps the game's arrow animation and main/subtarget colors.
 - Monster levels beside the name, colored by the observed check difficulty. Unknown levels stay hidden; confirmed impossible-to-gauge monsters show magenta `Lv.???`. Automatic checks are silent; manual `/check` output remains visible. Display and automatic checking have separate saved toggles, both on by default.
 - Monster detection/linking icons and an aggression strip to the left of the level/name. True sight, sight, sound, magic, job ability, blood and link; true sight replaces ordinary sight. Red means aggressive, blue means passive, and unknown data stays hidden. These are database defaults, not current hostility; private-server behavior may differ.
-- Experimental distant-target enlargement: a 25-100% readability size at 20 yalms, with extra enlargement fading completely by 3 yalms. Nearby plates keep their ordinary size. Toggle with `/nplab grow on|off`.
-- Experimental scrolling XP, LP, CP and EP gains anchored to your own name, including chains. Up to three entries drift and fade over three seconds; choose upward or downward motion with `/nplab xp up|down`, and toggle with `/nplab xp on|off`.
+- Distant-target enlargement (General tab): a 25-100% readability size at 20 yalms, with extra enlargement fading completely by 3 yalms. Nearby plates keep their ordinary size. Toggle with `/nplab grow on|off`.
+- Scrolling XP, LP, CP and EP gains anchored to your own name, including chains (General tab). Up to three entries drift down and fade over three seconds; toggle with `/nplab xp on|off`.
 - Saved settings; update in game with unload, replace the DLL, then load.
 - Monster HP% after the name, colored by FFXI's HP warning bands, then distance in yalms. Both default to the current target only.
 - Action names under the name while enemies ready abilities or cast, and for your own, party and alliance casts, weapon skills and job abilities. The result stays six seconds: green for success, red for interrupted, missed or resisted.
@@ -117,7 +117,7 @@ The plugin handles check packets before default-priority addons so chat replacem
 
 ### Standalone monster traits
 
-NameplateLab embeds its own compact trait database and icon atlas in the DLL. No MobDB, XIUI or BattleSight installation is required for traits, and no other addon's files or implementation are loaded. Names, levels and traits share one collection/layout/draw pass. Traits do not shift the name or level and do not participate in HP coloring. Hiding traits skips their lookup and drawing. The subdued red/blue separator is thin and shorter than the name; its dimensions follow name size, not the Trait size or Level size sliders. Scent is not displayed.
+NameplateLab embeds its own compact trait database and icon atlas in the DLL. No MobDB, XIUI or BattleSight installation is required for traits, and no other addon's files or implementation are loaded. Names, levels and traits share one collection/layout/draw pass. Traits do not shift the name or level and do not participate in HP coloring. Hiding traits skips their lookup and drawing. The subdued red/blue separator is thin and shorter than the name; its dimensions follow name size. Scent is not displayed.
 
 Data and seven original icons come directly from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330), revision `eee7e1ad5d0a49eb667f1f88602d9fce76276330`, under its [MIT license](licenses/MobDB.txt). The notice is also embedded as the DLL's `MOBDB_LICENSE` resource. This snapshot covers 245 zones; it is upstream data, not a Phoenix-specific server export. Missing monsters remain unknown rather than being labeled passive. An index override applies only when its name matches; otherwise the zone's name default is used. Database aggression does not predict level-dependent or conditional attacks.
 
@@ -129,7 +129,7 @@ The generated inputs are checked in, so normal builds need neither network acces
 
 ### Debuffs
 
-The Plates table's Debuffs column controls where rows appear (Target, You, Party/Alliance and each enemy claim row; all on by default). **Debuff icon size** (8-64, default 16) applies to every row. Icons follow the existing name size/width settings. Debuff opacity stays fixed instead of following nameplate fades; the artwork retains its own transparency. The row shares the name layout and draw pass and does not shift the name, levels, traits or HP fill. Rows appear only where the game draws a supported name; this does not force hidden self or party names to appear.
+The Plates table's Debuffs column controls where rows appear (Target, You, Party/Alliance and each enemy claim row; all on by default). **Debuff icon size** (4-24, default 16) applies to every row. Icons follow the existing name size/width settings. Debuff opacity stays fixed instead of following nameplate fades; the artwork retains its own transparency. The row shares the name layout and draw pass and does not shift the name, levels, traits or HP fill. Rows appear only where the game draws a supported name; this does not force hidden self or party names to appear.
 
 **Preview on target and yourself** temporarily substitutes poison, paralysis, blindness, silence and slow, plus a sample action cycling white/green/red, on your selected target (enemy or player) and on yourself, regardless of the table. Preview is not saved and never changes tracked effects.
 

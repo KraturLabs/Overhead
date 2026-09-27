@@ -128,23 +128,23 @@ DebuffRow StatusDebuffs(const std::uint8_t* statuses,std::uint64_t mask) noexcep
 std::atomic<unsigned> debuffSize{16};
 std::uint32_t sceneSeconds=0,sceneMillis=0;
 XpFeed xpFeed;
-std::atomic<bool> scrollXp{false},xpUp{false};
+std::atomic<bool> scrollXp{false};
 std::atomic<bool> growTarget{false};
 std::atomic<float> growFarSize{1};
 Actions actions;
-std::atomic<float> labelScale{1},actionScale{.6f};
+// Fixed sizes: level 60%, traits 80%, distance 45% of the name.
+constexpr float LevelScale=.6f,TraitScale=.8f,LabelScale=.45f;
+std::atomic<float> actionScale{.6f};
 Levels levels;
-std::atomic<float> levelScale{1};
-std::atomic<float> traitScale{1};
 std::atomic<unsigned> traitZone{0}; // Initial SDK zone, then zone-transition packets.
 TraitTexture traitTexture;
 HRESULT traitTextureResult=S_OK;
 void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;hideTarget=options.hideTarget;
-    autoCheck=options.autoCheck;levelScale=options.levelScale;traitScale=options.traitScale;debuffSize=options.debuffSize;
+    autoCheck=options.autoCheck;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;npcFeatures=options.npcFeatures;
-    labelScale=options.labelScale;actionScale=options.actionScale;scrollXp=options.scrollXp;xpUp=options.xpUp;
+    actionScale=options.actionScale;scrollXp=options.scrollXp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
     damageCorrectAspect.store(options.damageCorrectAspect);
@@ -574,7 +574,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     }
     if((features&ShowLevel)&&enemy){
         resources.level=levels.Label(entityIndex,identity);
-        resources.level.scale=levelScale.load(std::memory_order_relaxed);
+        resources.level.scale=LevelScale;
         resources.level.reserve=true;
         if(!resources.level.length){resources.level.length=5;std::memcpy(resources.level.text,"Lv.??",5);} // Placeholder until known.
     }
@@ -584,7 +584,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         char name[25]{};
         if(ReadBytes(entity+offsetof(Ashita::FFXI::entity_t,Name),name,24)){
             resources.traits.bits=LookupTraits(traitZone.load(std::memory_order_relaxed),entityIndex,name);
-            resources.traits.scale=traitScale.load(std::memory_order_relaxed);
+            resources.traits.scale=TraitScale;
             resources.textures[2]=traitTexture.value;
         }
     }
@@ -633,9 +633,9 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     if(features&ShowAction)resources.labels.action=actions.Read(entityIndex,identity,sceneSeconds);
     // Cycles neutral, success and failure colors each second.
     if(preview)resources.labels.action={10,"Thunder IV",ActionColor(sceneSeconds%3)};
-    resources.labels.scale=labelScale.load(std::memory_order_relaxed);
+    resources.labels.scale=LabelScale;
     resources.labels.actionScale=actionScale.load(std::memory_order_relaxed);
-    if(member==0&&singleLine&&scrollXp.load(std::memory_order_relaxed)){xpFeed.Read(resources.labels.floating,sceneMillis);resources.labels.floatUp=xpUp.load(std::memory_order_relaxed);}
+    if(member==0&&singleLine&&scrollXp.load(std::memory_order_relaxed)){xpFeed.Read(resources.labels.floating,sceneMillis);}
     // Native formatter 0x97840 already chose, ordered and stacked the icons;
     // only their placement changes, so no status flags are read.
     if(icons&&(spawnFlags&1)&&singleLine){icons->replace=true;icons->show=showIcons;}
@@ -1086,8 +1086,7 @@ public:
         }
         else if(_strnicmp(option,"xp ",3)==0){
             if(_stricmp(option+3,"on")==0||_stricmp(option+3,"off")==0){options_.scrollXp=_stricmp(option+3,"on")==0;ChangedVisuals();}
-            else if(_stricmp(option+3,"up")==0||_stricmp(option+3,"down")==0){options_.xpUp=_stricmp(option+3,"up")==0;ChangedVisuals();}
-            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] xp on | off | up | down");
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] xp on | off");
         }
         else if(_strnicmp(option,"grow ",5)==0){
             if(_stricmp(option+5,"on")==0||_stricmp(option+5,"off")==0){options_.growTarget=_stricmp(option+5,"on")==0;ChangedVisuals();}
@@ -1218,6 +1217,15 @@ public:
                 options_.damageEnabled=false;options_.damageCorrectAspect=false;
                 options_.damageScale=1;options_.damageWidth=1;changed=true;
             }
+            gui->SeparatorText("Scrolling XP and distant target");
+            changed=gui->Checkbox("Scrolling XP from your name",&options_.scrollXp)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Experience, limit, capacity and exemplar points you gain drift down from your name and fade over 3 seconds.");
+            changed=gui->Checkbox("Enlarge distant target",&options_.growTarget)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Extra enlargement fades out as you approach. Within 3 yalms the plate is exactly its ordinary size; at 20 yalms it is raised to Distant size only if needed. Your Size and Width settings still apply.");
+            float growSize=options_.growFarSize*100;
+            if(gui->SliderFloat("Distant size",&growSize,25,100,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.growFarSize=growSize/100;changed=true;}
+            if(gui->IsItemHovered())gui->SetTooltip("Readability size at 20 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
+            if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
             gui->SeparatorText("Nameplate font");
             gui->TextUnformatted("Uses the game's loaded font, including XIPivot DATs.");
             gui->TextUnformatted("Sharp keeps pixel edges; Smooth softens scaling.");
@@ -1280,40 +1288,21 @@ public:
             gui->SeparatorText("Levels and traits");
             changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels stay hidden.");
-            float levelSize=options_.levelScale*100;
-            if(gui->SliderFloat("Level size",&levelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.levelScale=levelSize/100;changed=true;}
-            if(gui->Button("Reset level size")){options_.levelScale=1;changed=true;}
-            float traitSize=options_.traitScale*100;
-            if(gui->SliderFloat("Trait size",&traitSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.traitScale=traitSize/100;changed=true;}
-            if(gui->Button("Reset trait size")){options_.traitScale=1;changed=true;}
             gui->TextUnformatted("Traits: MobDB defaults, not current hostility. Red: aggressive, blue: passive.");
             if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
             gui->SeparatorText("Labels");
-            float labelSize=options_.labelScale*100;
-            if(gui->SliderFloat("HP% / distance size",&labelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.labelScale=labelSize/100;changed=true;}
-            if(gui->Button("Reset label size")){options_.labelScale=1;changed=true;}
             float actionSize=options_.actionScale*100;
             if(gui->SliderFloat("Action size",&actionSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.actionScale=actionSize/100;changed=true;}
             if(gui->IsItemHovered())gui->SetTooltip("Readies and casts; the result stays 6 seconds: green success, red interrupted/missed/resisted.");
             if(gui->Button("Reset action size")){options_.actionScale=.6f;changed=true;}
             int iconSize=static_cast<int>(options_.debuffSize);
-            if(gui->SliderInt("Debuff icon size",&iconSize,8,64,"%d",ImGuiSliderFlags_AlwaysClamp)){options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;}
+            if(gui->SliderInt("Debuff icon size",&iconSize,4,24,"%d",ImGuiSliderFlags_AlwaysClamp)){options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;}
             if(gui->Button("Reset debuff size")){options_.debuffSize=16;changed=true;}
             if(FAILED(debuffTextureResult))gui->TextUnformatted("Debuff artwork unavailable; reload the plugin to try again.");
             gui->EndTabItem();
             }
             if(gui->BeginTabItem("Experimental")){
-            changed=gui->Checkbox("Scrolling XP from your name",&options_.scrollXp)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Experience, limit, capacity and exemplar points you gain drift from your name and fade over 3 seconds. Uses the label size.");
-            changed=gui->Checkbox("Drift XP upward",&options_.xpUp)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Off: starts below your name and drifts down. On: starts above it and rises.");
-            gui->Separator();
-            changed=gui->Checkbox("Enlarge distant target",&options_.growTarget)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Extra enlargement fades out as you approach. Within 3 yalms the plate is exactly its ordinary size; at 20 yalms it is raised to Distant size only if needed. Your Size and Width settings still apply.");
-            float growSize=options_.growFarSize*100;
-            if(gui->SliderFloat("Distant size",&growSize,25,100,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.growFarSize=growSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Readability size at 20 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
-            if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
+            gui->TextUnformatted("Nothing here right now.");
             gui->EndTabItem();
             }
             gui->EndTabBar();
