@@ -685,6 +685,8 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         for(unsigned i=0;ready&&i<resources.level.length;++i)
             ready=loadGlyph(static_cast<std::uint8_t>(resources.level.text[i]));
         if(!ready)resources.level={}; // Missing optional glyphs do not suppress the name.
+        for(unsigned i=0;ready&&i<resources.level.checkLength;++i)
+            if(!loadGlyph(static_cast<std::uint8_t>(resources.level.check[i])))resources.level.checkLength=0; // Level stays.
     }
     if(resources.traits.bits&&!loadGlyph(32))resources.traits={};
     for(auto* label:{&resources.labels.health,&resources.labels.mp,&resources.labels.tp,&resources.labels.distance,&resources.labels.action}){

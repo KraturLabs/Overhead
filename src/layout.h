@@ -8,7 +8,7 @@ constexpr unsigned MaxLabel = 31; // Action names; HP% and distance are shorter.
 constexpr unsigned MaxFloating = 3, MaxFloatText = 20; // Gained points below your name.
 // Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5), an action name
 // and the floating point gains.
-constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + MaxLabel + MaxFloating*MaxFloatText;
+constexpr unsigned MaxQuads = MaxGlyphs + 6 + 3 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + MaxLabel + MaxFloating*MaxFloatText;
 struct DebuffRow {
     unsigned count=0;
     std::uint16_t effects[MaxDebuffs]{};
@@ -22,6 +22,8 @@ struct TraitLabel {
 struct LevelLabel {
     unsigned length=0;
     char text[7]{};
+    char check[4]{}; // Check rank abbreviation drawn above "Lv."; empty when unknown.
+    unsigned checkLength=0;
     std::uint32_t color=0;
     float scale=1; // User factor relative to the existing name size.
 };

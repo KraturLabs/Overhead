@@ -22,9 +22,16 @@ LevelLabel Levels::Label(unsigned index,std::uint32_t id) const noexcept {
     if(index>=Slots||!id)return label;
     const auto value=values_[index].load(std::memory_order_relaxed);
     auto level=static_cast<std::uint32_t>(value)==id?static_cast<unsigned>((value>>32)&0xFFFF):0u;
-    // Too weak, easy prey, decent, even, tough, very tough, incredibly tough.
+    // Too weak, incredibly easy prey, easy prey, decent, even, tough, very tough, incredibly tough.
     constexpr std::uint32_t colors[]={0xA0A0A0,0x40E040,0x40D0E0,0x6080FF,0xFFFF40,0xFFA040,0xFF4040,0xFF4040};
-    if(level)label.color=level==256?0xFF40FF:colors[static_cast<unsigned>(value>>48)-64];
+    constexpr const char* checks[]={"TW","IEP","EP","DC","EM","T","VT","IT"};
+    if(level==256)label.color=0xFF40FF;
+    else if(level){
+        const auto rank=static_cast<unsigned>(value>>48)-64;
+        label.color=colors[rank];
+        label.checkLength=static_cast<unsigned>(std::strlen(checks[rank]));
+        std::memcpy(label.check,checks[rank],label.checkLength);
+    }
     // A widescan level without a check reply has no difficulty: neutral white.
     else if((level=scanned_[index].load(std::memory_order_relaxed))!=0)label.color=0xFFFFFF;
     else return label;

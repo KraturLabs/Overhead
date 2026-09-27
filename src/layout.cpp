@@ -112,6 +112,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     const float gap = iconCount ? static_cast<float>(in.glyphs[32].width) : 0;
     const float iconStart = start - iconAdvance - gap;
     float detailLeft=iconStart;
+    float nameTop=0;bool nameSeen=false; // Topmost name glyph, local units.
     unsigned iconFirst=0,iconEnd=0; // Detached prefix quads.
     for (unsigned i = 0; i < count; ++i) {
         const auto code = codes[i];
@@ -137,6 +138,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const float right = rounded(leftExact + size.width * scale);
         const float top = rounded(static_cast<double>(g.offsetY + dy) + line);
         const float bottom = rounded(static_cast<double>(rounded(size.height * scale)) + top);
+        if(!detached&&(!nameSeen||top<nameTop)){nameTop=top;nameSeen=true;}
         pen = rounded(advance + pen);
         auto& q = out.quads[out.count++];
         q.code = code; q.textureGroup = g.textureGroup;
@@ -163,7 +165,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     // Native-font runs: decorations (0x100|code) stay out of HP bounds/coloring.
     // Scale grows from the run's own baseline; shift moves it down in local units.
     // '%' is drawn smaller than the digits it follows, on the same baseline.
-    constexpr float Symbol=.7f;
+    constexpr float Symbol=.5f;
     // Native overhead rendering doubles color and alpha modulation. Only the name
     // follows the native target pulse (its alpha); every detail uses this fixed opacity.
     constexpr std::uint32_t DetailAlpha=0x80000000u;
@@ -200,7 +202,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         return leftmost;
     };
     if(level&&level->length&&level->length<=6&&nameCount&&validGlyph(in.glyphs[32])){
-        // "Lv." is white like the distance at 60% size; only the number carries the color.
+        // "Lv." (60% size) and the number are white like the distance; only the check rank carries the color.
         constexpr unsigned Prefix=3;constexpr float PrefixSize=.6f;
         float prefixWidth=0,width=0;
         if(level->length<=Prefix||!measure(level->text,Prefix,prefixWidth)
@@ -209,7 +211,29 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         detailLeft=std::min(detailLeft,labelPen);
         const auto first=out.count;
         detailLeft=std::min(detailLeft,write(level->text,Prefix,0x808080u,level->scale*PrefixSize,labelPen,0));
-        write(level->text+Prefix,level->length-Prefix,level->color,level->scale,labelPen+prefixWidth*PrefixSize*level->scale,0);
+        write(level->text+Prefix,level->length-Prefix,0x808080u,level->scale,labelPen+prefixWidth*PrefixSize*level->scale,0);
+        if(level->checkLength&&level->checkLength<=3&&nameSeen){
+            // Check rank centered over the small "Lv.", sitting on its top, number color.
+            // Never rises above the name's top: shrinks instead.
+            const auto extent=[&](const char* text,unsigned length,float& top){
+                top=static_cast<float>(in.glyphs[static_cast<unsigned char>(text[0])].offsetY);
+                for(unsigned i=1;i<length;++i)top=std::min(top,static_cast<float>(in.glyphs[static_cast<unsigned char>(text[i])].offsetY));
+                const auto& r=in.glyphs[static_cast<unsigned char>(text[0])];
+                return static_cast<float>(r.offsetY+r.height);
+            };
+            float checkWidth=0,prefixTop=0,checkTop=0;
+            if(measure(level->check,level->checkLength,checkWidth)){
+                const float prefixBase=extent(level->text,Prefix,prefixTop);
+                const float checkBase=extent(level->check,level->checkLength,checkTop);
+                const float bottom=prefixBase+level->scale*PrefixSize*(prefixTop-prefixBase);
+                const float height=checkBase-checkTop;
+                const float size=height>0?std::min(level->scale*PrefixSize,(bottom-nameTop)/height):0;
+                if(size>0){
+                    const float checkPen=labelPen+(prefixWidth*PrefixSize*level->scale-checkWidth*size)/2;
+                    detailLeft=std::min(detailLeft,write(level->check,level->checkLength,level->color,size,checkPen,bottom-checkBase));
+                }
+            }
+        }
         mark(first,ShowLevel);
     }
     if(labels&&nameCount&&validGlyph(in.glyphs[32])){
