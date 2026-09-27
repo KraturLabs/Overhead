@@ -188,12 +188,27 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         // overlaps its lower right corner. None shift the name, level, traits or cursor.
         const float space=static_cast<float>(in.glyphs[32].width),end=start+total;
         float next=end+space,width=0;
-        const TextLabel* right[]={&labels->health,&labels->mp,&labels->tp,&labels->distance};
-        for(unsigned i=0;i<4;++i){
-            const auto& label=*right[i];
-            if(label.length>(i==3?5u:4u)||!measure(label.text,label.length,width))continue;
+        const auto single=[&](const TextLabel& label,unsigned limit){
+            if(label.length>limit||!measure(label.text,label.length,width))return;
             write(label.text,label.length,label.color,labels->scale,next,0);next+=width*labels->scale+space;
+        };
+        single(labels->health,4);
+        // MP stacks over TP within the name's height with a small gap, nudged
+        // slightly down; either alone uses a fixed 65% size.
+        float mpWidth=0,tpWidth=0;
+        const bool hasMp=labels->mp.length<=4&&measure(labels->mp.text,labels->mp.length,mpWidth);
+        const bool hasTp=labels->tp.length<=4&&measure(labels->tp.text,labels->tp.length,tpWidth);
+        if(hasMp&&hasTp&&textReference){
+            const float breath=.1f,size=(1-breath)*.5f,drop=.05f;
+            const float height=static_cast<float>(textReference->height);
+            write(labels->tp.text,labels->tp.length,labels->tp.color,size,next,drop*height);
+            write(labels->mp.text,labels->mp.length,labels->mp.color,size,next,(drop-size-breath)*height);
+            next+=std::max(mpWidth,tpWidth)*size+space;
+        }else for(const auto* label:{&labels->mp,&labels->tp}){
+            if(label->length>4||!measure(label->text,label->length,width))continue;
+            write(label->text,label->length,label->color,.65f,next,0);next+=width*.65f+space;
         }
+        single(labels->distance,5);
         if(textReference&&labels->action.length<=MaxLabel&&measure(labels->action.text,labels->action.length,width))
             write(labels->action.text,labels->action.length,labels->action.color,labels->actionScale,
                 end-width*labels->actionScale,textReference->height*.3f);

@@ -1257,7 +1257,7 @@ public:
             if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
             gui->SeparatorText("Labels");
             float labelSize=options_.labelScale*100;
-            if(gui->SliderFloat("HP% / MP / TP / distance size",&labelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.labelScale=labelSize/100;changed=true;}
+            if(gui->SliderFloat("HP% / distance size",&labelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.labelScale=labelSize/100;changed=true;}
             if(gui->Button("Reset label size")){options_.labelScale=1;changed=true;}
             float actionSize=options_.actionScale*100;
             if(gui->SliderFloat("Action size",&actionSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.actionScale=actionSize/100;changed=true;}
