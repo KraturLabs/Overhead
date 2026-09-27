@@ -286,10 +286,28 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         }
         for(const auto& floating:labels->floating){
             const auto& label=floating.text;
-            if(label.length>MaxFloatText||!(floating.alpha>0)||!measure(label.text,label.length,width))continue;
+            if(label.length>MaxFloatText||!(floating.alpha>0))continue;
+            // Up to four runs: text, a small lowered chain count, text, a half-size raised unit.
+            // Each run takes its first glyph's baseline, so runs must not start with a space.
+            constexpr float SubSize=.6f,SubDrop=.2f,UnitSize=.5f,UnitRise=.45f;
+            const unsigned unitStart=floating.unitStart<label.length?floating.unitStart:label.length;
+            const unsigned superStart=floating.superLength&&floating.superStart+floating.superLength<=unitStart?floating.superStart:unitStart;
+            const unsigned ends[4]={superStart,superStart+(superStart<unitStart?floating.superLength:0),unitStart,label.length};
+            const float runSizes[4]={labels->scale,labels->scale*SubSize,labels->scale,labels->scale*UnitSize};
+            float widths[4]{};bool ok=true;
+            for(unsigned r=0,from=0;r<4;from=ends[r++])
+                if(ends[r]>from&&!measure(label.text+from,ends[r]-from,widths[r]))ok=false;
+            if(!ok)continue;
+            width=0;for(unsigned r=0;r<4;++r)width+=widths[r]*runSizes[r];
+            const float shift=(labels->floatUp?-textReference->height*(1.f+floating.drop):textReference->height*(1.2f+floating.drop))*labels->scale;
             const auto first=out.count;
-            write(label.text,label.length,label.color,labels->scale,start+(total-width*labels->scale)*.5f,
-                (labels->floatUp?-textReference->height*(1.f+floating.drop):textReference->height*(1.2f+floating.drop))*labels->scale,floating.alpha<1?floating.alpha:1);
+            float runPen=start+(total-width)*.5f;
+            for(unsigned r=0,from=0;r<4;from=ends[r++]){
+                if(ends[r]==from)continue;
+                write(label.text+from,ends[r]-from,label.color,runSizes[r],runPen,
+                    shift+textReference->height*labels->scale*(r==1?SubDrop:r==3?-UnitRise:0.f),floating.alpha<1?floating.alpha:1);
+                runPen+=widths[r]*runSizes[r];
+            }
             // Scrolling point gains always draw on top.
             for(auto i=first;i<out.count;++i)out.quads[i].code|=FrontCode;
         }

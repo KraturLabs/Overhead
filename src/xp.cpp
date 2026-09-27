@@ -4,7 +4,7 @@
 namespace nameplate_lab {
 namespace {
 constexpr std::uint32_t Colors[]={0,0x807040u,0x5A7080u,0x806080u,0x607850u}; // Half intensity.
-constexpr const char* Units[]={""," XP"," LP"," CP"," EP"};
+constexpr const char* Units[]={"","XP","LP","CP","EP"};
 void append(TextLabel& label,const char* text) noexcept {
     while(*text&&label.length<MaxFloatText)label.text[label.length++]=*text++;
 }
@@ -51,8 +51,13 @@ void XpFeed::Read(FloatingLabel (&out)[MaxFloating],std::uint32_t nowMs) const n
         const auto kind=static_cast<unsigned>(value&15),chain=static_cast<unsigned>((value>>4)&255);
         const float t=static_cast<float>(static_cast<std::uint32_t>(nowMs-(value>>32)))/XpLifeMs;
         auto& label=out[i].text;
-        if(chain){append(label,"Chain ");append(label,chain);append(label," ");}
-        append(label,static_cast<unsigned>((value>>12)&0xFFFFF));append(label,Units[kind]);
+        if(chain){
+            append(label,"Chain");
+            out[i].superStart=label.length;append(label,chain);append(label," ");
+            out[i].superLength=label.length-out[i].superStart;
+        }
+        append(label,static_cast<unsigned>((value>>12)&0xFFFFF));
+        append(label," ");out[i].unitStart=label.length;append(label,Units[kind]);
         label.color=Colors[kind];
         // Two name heights of drift over the life; fully visible for the first
         // third, then a slow fade to nothing.

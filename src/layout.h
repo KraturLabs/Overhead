@@ -38,6 +38,8 @@ struct TextLabel {
 struct FloatingLabel {
     TextLabel text;
     float drop=0, alpha=0;
+    unsigned superStart=0, superLength=0; // Run drawn small and lowered (the chain count after "Chain").
+    unsigned unitStart=MaxLabel+1; // Trailing unit ("XP") drawn at half size and raised.
 };
 struct SideLabels {
     TextLabel health, mp, tp, distance, action;
