@@ -25,6 +25,8 @@ bool ValidOptions(const Options& v) noexcept {
         &&v.debuffSize>=8&&v.debuffSize<=64
         &&!(v.rows[0]&~RowColumns[0])&&!(v.rows[1]&~RowColumns[1])&&!(v.rows[2]&~RowColumns[2])&&!(v.rows[3]&~RowColumns[3])
         &&!(v.rows[4]&~RowColumns[4])&&!(v.rows[5]&~RowColumns[5])&&!(v.rows[6]&~RowColumns[6])
+        &&!(v.front[0]&~RowColumns[0])&&!(v.front[1]&~RowColumns[1])&&!(v.front[2]&~RowColumns[2])&&!(v.front[3]&~RowColumns[3])
+        &&!(v.front[4]&~RowColumns[4])&&!(v.front[5]&~RowColumns[5])&&!(v.front[6]&~RowColumns[6])
         &&std::isfinite(v.labelScale)&&v.labelScale>=.25f&&v.labelScale<=3
         &&std::isfinite(v.actionScale)&&v.actionScale>=.25f&&v.actionScale<=3
         &&std::isfinite(v.damageScale)&&v.damageScale>=.25f&&v.damageScale<=3
@@ -130,6 +132,9 @@ Options LoadOptions(const char* path) noexcept {
         if(old("PartyActions",1)){out.rows[RowSelf]|=ShowAction;out.rows[RowParty]|=ShowAction;}
     }else for(unsigned row=0;row<RowCount;++row)
         out.rows[row]=readChoice(RowKeys[row],DefaultRows[row],1023)&RowColumns[row];
+    static constexpr const char* FrontKeys[RowCount]={"FrontTarget","FrontSelf","FrontParty","FrontClaimedSelf","FrontClaimedParty","FrontClaimedOther","FrontUnclaimed"};
+    for(unsigned row=0;row<RowCount;++row)
+        out.front[row]=readChoice(FrontKeys[row],DefaultFront[row],1023)&RowColumns[row];
     GetPrivateProfileStringA("Nameplates","LabelScale","1",text,sizeof(text),path);ParseFactor(text,out.labelScale);
     GetPrivateProfileStringA("Nameplates","ActionScale","0.6",text,sizeof(text),path);ParseFactor(text,out.actionScale);
     GetPrivateProfileStringA("Nameplates","TraitScale","1",text,sizeof(text),path);ParseFactor(text,out.traitScale);
@@ -159,14 +164,15 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     char growFarSize[32]{};
     const auto gm=std::to_chars(growFarSize,growFarSize+sizeof(growFarSize)-1,value.growFarSize);
     if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{}||ts.ec!=std::errc{}||xs.ec!=std::errc{}||as.ec!=std::errc{}||gm.ec!=std::errc{})return false;
-    char content[1280]{};
+    char content[1536]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nTraitScale=%s\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nLabelScale=%s\r\nActionScale=%s\r\nScrollXp=%u\r\nXpUp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nTraitScale=%s\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nLabelScale=%s\r\nActionScale=%s\r\nScrollXp=%u\r\nXpUp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,levelScale,traitScale,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
         value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.friendlyHealth?1u:0u,labelScale,actionScale,value.scrollXp?1u:0u,value.xpUp?1u:0u,
-        value.growTarget?1u:0u,growFarSize);
+        value.growTarget?1u:0u,growFarSize,value.front[0],value.front[1],value.front[2],value.front[3],
+        value.front[4],value.front[5],value.front[6]);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

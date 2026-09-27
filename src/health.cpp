@@ -8,7 +8,7 @@ namespace {
 bool letter(const Quad& q) noexcept {
     // Native font group 0 holds letters/punctuation; group 1 holds status icons.
     // Spaces affect the gap between letters but never extend the outer bounds.
-    return q.textureGroup == 0 && q.code > 32 && q.code < 142;
+    return q.textureGroup == 0 && (q.code & ~FrontCode) > 32 && (q.code & ~FrontCode) < 142;
 }
 void dim(Quad& q) noexcept {
     for (auto& v : q.vertices) {

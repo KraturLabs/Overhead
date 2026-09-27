@@ -17,6 +17,8 @@ constexpr unsigned DefaultRows[RowCount]={511,RowShow|ShowHealth|ShowTp|ShowDebu
     RowShow|ShowHealth|ShowTp|ShowDebuffs|ShowAction,RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction,
     RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction,RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction,
     RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction};
+// Actions stay on top wherever a row can show them.
+constexpr unsigned DefaultFront[RowCount]={ShowAction,ShowAction,ShowAction,ShowAction,ShowAction,ShowAction,ShowAction};
 struct Options {
     float scale = 1;
     float width = 1;
@@ -30,6 +32,7 @@ struct Options {
     float traitScale = 1;
     unsigned debuffSize = 16;
     unsigned rows[RowCount] = {DefaultRows[0],DefaultRows[1],DefaultRows[2],DefaultRows[3],DefaultRows[4],DefaultRows[5],DefaultRows[6]};
+    unsigned front[RowCount] = {DefaultFront[0],DefaultFront[1],DefaultFront[2],DefaultFront[3],DefaultFront[4],DefaultFront[5],DefaultFront[6]};
     bool friendlyHealth = false; // Deplete your own and party/alliance names by HP.
     bool unclaimedDamagedOnly = false; // Unclaimed row only once the monster is damaged.
     float labelScale = 1, actionScale = .6f; // HP%/distance and action sizes.

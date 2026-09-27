@@ -102,6 +102,7 @@ DebuffTexture debuffTexture;
 HRESULT debuffTextureResult=S_OK;
 std::atomic<bool> previewDebuffs{false};
 std::atomic<unsigned> rowFeatures[RowCount]; // Saved per-category detail columns.
+std::atomic<unsigned> rowFront[RowCount]; // Parts each category draws on top.
 std::atomic<bool> unclaimedDamagedOnly{false},friendlyHealth{false};
 // Whether any shown row enables this detail column.
 bool AnyRows(unsigned column) noexcept {
@@ -141,7 +142,7 @@ HRESULT traitTextureResult=S_OK;
 void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;hideTarget=options.hideTarget;
     autoCheck=options.autoCheck;levelScale=options.levelScale;traitScale=options.traitScale;debuffSize=options.debuffSize;
-    for(unsigned row=0;row<RowCount;++row)rowFeatures[row]=options.rows[row];
+    for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;
     labelScale=options.labelScale;actionScale=options.actionScale;scrollXp=options.scrollXp;xpUp=options.xpUp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
@@ -552,6 +553,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         features=rowFeatures[row].load(std::memory_order_relaxed);
         if(!(features&RowShow))features=0;
     }
+    if(row<RowCount)resources.labels.front=rowFront[row].load(std::memory_order_relaxed);
     // Preview substitutes sample debuffs and an action on the selected target
     // (enemy or player) and on you, regardless of the table. Not saved.
     bool preview=false;
@@ -777,8 +779,22 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     // The native submit changes only render target, viewport and projection, so
     // state set here holds for this whole name. Native drawing runs between names.
     unsigned group=~0u;DWORD alpha=~0u;
+    // Front quads (the action label) skip the depth test so bodies and scenery
+    // never cover them; the prior ZFUNC is restored before leaving this name.
+    DWORD zfunc=0;bool zSaved=false,zFront=false;
+    const auto setFront=[&](bool front){
+        if(front==zFront)return true;
+        if(!zSaved){
+            if(!progress.Check(device->GetRenderState(D3DRS_ZFUNC,&zfunc),"Get ZFUNC"))return false;
+            zSaved=true;
+        }
+        if(!progress.Check(device->SetRenderState(D3DRS_ZFUNC,front?D3DCMP_ALWAYS:zfunc),front?"Set ZFUNC":"Restore ZFUNC"))return false;
+        zFront=front;
+        return true;
+    };
     const auto fail=[&]{
         progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF");
+        if(zFront)progress.Check(device->SetRenderState(D3DRS_ZFUNC,zfunc),"Restore ZFUNC");
         return finish(false);
     };
     if(!output.count)return finish(true);
@@ -794,6 +810,7 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         if(health.enabled){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
         for(unsigned piece=0;piece<pieceCount;++piece){
             const auto& q=quads[piece];
+            if(!setFront((q.code&nameplate_lab::FrontCode)!=0))return fail();
             if(q.textureGroup!=group){
                 if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture"))return fail();
                 group=q.textureGroup;
@@ -806,6 +823,7 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
             ++progress.submitted;
         }
     }
+    if(!setFront(false))return fail();
     if(alpha&&!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF"))return finish(false);
     return finish(true);
 }
@@ -1232,6 +1250,25 @@ public:
             changed=gui->Checkbox("Deplete your and party/alliance names by HP",&options_.friendlyHealth)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Like monster HP: the lost part dims. Below 75%% the rest takes the HP%% color.");
             if(gui->IsItemHovered())gui->SetTooltip("Unhurt unclaimed monsters show no details unless targeted.");
+            gui->SeparatorText("On top");
+            if(gui->BeginTable("FrontRows",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+                gui->TableSetupColumn("");
+                gui->TableSetupColumn("Name");
+                for(unsigned c=1;c<sizeof(ColumnNames)/sizeof(*ColumnNames);++c)gui->TableSetupColumn(ColumnNames[c]);
+                gui->TableHeadersRow();
+                for(unsigned row=0;row<RowCount;++row){
+                    gui->TableNextRow();gui->TableNextColumn();gui->TextUnformatted(RowNames[row]);
+                    for(unsigned c=0;c<sizeof(Columns)/sizeof(*Columns);++c){
+                        gui->TableNextColumn();
+                        if(!(RowColumns[row]&Columns[c])){gui->TextDisabled("-");continue;}
+                        char id[16];_snprintf_s(id,sizeof(id),_TRUNCATE,"##f%u.%u",row,c);
+                        bool on=(options_.front[row]&Columns[c])!=0;
+                        if(gui->Checkbox(id,&on)){options_.front[row]^=Columns[c];changed=true;}
+                    }
+                }
+                gui->EndTable();
+            }
+            gui->TextUnformatted("Checked parts draw over bodies and scenery. Nearer names can still cover them.");
             gui->SeparatorText("Levels and traits");
             changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels stay hidden.");

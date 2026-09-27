@@ -41,6 +41,8 @@ struct SideLabels {
     FloatingLabel floating[MaxFloating];
     bool floatUp=false; // Floating labels rise from above the name instead.
     float scale=1, actionScale=.6f; // User factors relative to the name size.
+    // Parts drawn over world geometry, as DetailColumn bits; RowShow is the name.
+    unsigned front=0;
 };
 struct Glyph {
     std::int16_t width, height, offsetX, offsetY;
@@ -61,6 +63,8 @@ struct Vertex {
     std::uint32_t color;
     float u, v;
 };
+// Set in Quad::code for quads drawn without the depth test, over world geometry.
+constexpr std::uint32_t FrontCode = 0x10000u;
 struct Quad {
     std::uint32_t code, textureGroup, alphaReference;
     Vertex vertices[4];

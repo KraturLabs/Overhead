@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "options.h"
 #include "debuffs.h"
 #include "traits.h"
 #include <algorithm>
@@ -63,6 +64,11 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     std::uint8_t codes[MaxGlyphs];
     unsigned count = 0, nameCount = 0;
     if (!ExpandName(in, codes, count, nameCount, icons)) return false;
+    // Tag each part the row puts on top; Draw skips the depth test for those.
+    const unsigned front=labels?labels->front:0;
+    const auto mark=[&](unsigned first,unsigned bit){
+        if(front&bit)for(unsigned i=first;i<out.count;++i)out.quads[i].code|=FrontCode;
+    };
     struct Size { int width, height; } sizes[MaxGlyphs]{};
     // Name and detached prefix each follow the native rules from their own first
     // glyph: later icons shrink and overlap the one before them. The name is
@@ -151,6 +157,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             };
         }
     }
+    mark(0,RowShow);
     // Native-font runs: decorations (0x100|code) stay out of HP bounds/coloring.
     // Scale grows from the run's own baseline; shift moves it down in local units.
     // '%' is drawn smaller than the digits it follows, on the same baseline.
@@ -192,18 +199,22 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         if(!measure(level->text,level->length,width))return true;
         const float labelPen=iconStart-width*level->scale-in.glyphs[32].width;
         detailLeft=std::min(detailLeft,labelPen);
+        const auto first=out.count;
         detailLeft=std::min(detailLeft,write(level->text,level->length,level->color,level->scale,labelPen,0));
+        mark(first,ShowLevel);
     }
     if(labels&&nameCount&&validGlyph(in.glyphs[32])){
         // HP%, MP, TP then distance follow the name's advance on its baseline; the action
         // overlaps its lower right corner. None shift the name, level, traits or cursor.
         const float space=static_cast<float>(in.glyphs[32].width),end=start+total;
         float next=end+space,width=0;
-        const auto single=[&](const TextLabel& label,unsigned limit){
+        const auto single=[&](const TextLabel& label,unsigned limit,unsigned bit){
             if(label.length>limit||!measure(label.text,label.length,width))return;
+            const auto first=out.count;
             write(label.text,label.length,label.color,labels->scale,next,0);next+=width*labels->scale+space;
+            mark(first,bit);
         };
-        single(labels->health,4);
+        single(labels->health,4,ShowHealth);
         // MP stacks over TP within the name's height with a small gap, nudged
         // slightly down; either alone uses a fixed 65% size.
         float mpWidth=0,tpWidth=0;
@@ -212,17 +223,24 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         if(hasMp&&hasTp&&textReference){
             const float breath=.1f,size=(1-breath)*.5f,drop=.05f;
             const float height=static_cast<float>(textReference->height);
-            write(labels->tp.text,labels->tp.length,labels->tp.color,size,next,drop*height);
-            write(labels->mp.text,labels->mp.length,labels->mp.color,size,next,(drop-size-breath)*height);
+            auto first=out.count;
+            write(labels->tp.text,labels->tp.length,labels->tp.color,size,next,drop*height);mark(first,ShowTp);
+            first=out.count;
+            write(labels->mp.text,labels->mp.length,labels->mp.color,size,next,(drop-size-breath)*height);mark(first,ShowMp);
             next+=std::max(mpWidth,tpWidth)*size+space;
         }else for(const auto* label:{&labels->mp,&labels->tp}){
             if(label->length>4||!measure(label->text,label->length,width))continue;
+            const auto first=out.count;
             write(label->text,label->length,label->color,.65f,next,0);next+=width*.65f+space;
+            mark(first,label==&labels->mp?ShowMp:ShowTp);
         }
-        single(labels->distance,5);
-        if(textReference&&labels->action.length<=MaxLabel&&measure(labels->action.text,labels->action.length,width))
+        single(labels->distance,5,ShowDistance);
+        if(textReference&&labels->action.length<=MaxLabel&&measure(labels->action.text,labels->action.length,width)){
+            const auto first=out.count;
             write(labels->action.text,labels->action.length,labels->action.color,labels->actionScale,
                 end-width*labels->actionScale,textReference->height*.3f);
+            mark(first,ShowAction);
+        }
         for(const auto& floating:labels->floating){
             const auto& label=floating.text;
             if(label.length>MaxFloatText||!(floating.alpha>0)||!measure(label.text,label.length,width))continue;
@@ -235,6 +253,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const float top=textReference->offsetY+(textReference->height-size)*.5f;
         float right=detailLeft-in.glyphs[32].width;
         const auto alpha=in.nameColor&0xFF000000u;
+        const auto first=out.count;
         const auto quad=[&](float left,float y,float width,float height,unsigned cell,std::uint32_t color){
             auto& q=out.quads[out.count++];
             q.code=0x200u+cell;q.textureGroup=2;q.alphaReference=0;
@@ -261,6 +280,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             quad(right-size,top,size,size,static_cast<unsigned>(flag),alpha|0x808080u);
             right-=size+2*traits->scale;
         }
+        mark(first,ShowTraits);
     }
     if(debuffs&&debuffs->count&&debuffs->count<=MaxDebuffs&&textReference){
         const float size=debuffs->size,iconGap=2;
@@ -279,6 +299,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 in.y+in.scaleY*(top+(v&2?size:0)),in.z,1,0x80808080u,
                 (cell%16*32+(v&1?31.5f:.5f))/512,(cell/16*32+(v&2?31.5f:.5f))/256};
         }
+        mark(out.count-debuffs->count,ShowDebuffs);
         if(bounds)*bounds={in.x+in.scaleX*left,in.x+in.scaleX*(left+width),in.y+in.scaleY*top,true};
     }
     return true;
