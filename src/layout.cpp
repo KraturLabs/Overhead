@@ -214,7 +214,8 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         write(level->text+Prefix,level->length-Prefix,0x808080u,level->scale,labelPen+prefixWidth*PrefixSize*level->scale,0);
         if(level->checkLength&&level->checkLength<=3&&nameSeen){
             // Check rank centered over the small "Lv.", sitting on its top, number color.
-            // Never rises above the name's top: shrinks instead.
+            // Sized 75% past the room below the name's top (at most 80% of the level size);
+            // glyph cells carry transparent top padding, so the visible letters still sit near the name's top.
             const auto extent=[&](const char* text,unsigned length,float& top){
                 top=static_cast<float>(in.glyphs[static_cast<unsigned char>(text[0])].offsetY);
                 for(unsigned i=1;i<length;++i)top=std::min(top,static_cast<float>(in.glyphs[static_cast<unsigned char>(text[i])].offsetY));
@@ -227,7 +228,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 const float checkBase=extent(level->check,level->checkLength,checkTop);
                 const float bottom=prefixBase+level->scale*PrefixSize*(prefixTop-prefixBase);
                 const float height=checkBase-checkTop;
-                const float size=height>0?std::min(level->scale*PrefixSize,(bottom-nameTop)/height):0;
+                const float size=height>0?std::min(level->scale*.8f,1.75f*(bottom-nameTop)/height):0;
                 if(size>0){
                     const float checkPen=labelPen+(prefixWidth*PrefixSize*level->scale-checkWidth*size)/2;
                     detailLeft=std::min(detailLeft,write(level->check,level->checkLength,level->color,size,checkPen,bottom-checkBase));
