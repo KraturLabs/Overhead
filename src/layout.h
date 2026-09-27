@@ -3,7 +3,14 @@
 
 namespace nameplate_lab {
 constexpr unsigned MaxGlyphs = 36;
-constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9; // Level + seven traits + outlined strip.
+constexpr unsigned MaxDebuffs = 32;
+constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9 + MaxDebuffs;
+struct DebuffRow {
+    unsigned count=0;
+    std::uint16_t effects[MaxDebuffs]{};
+    float size=16; // Local name units, before the existing size/width transform.
+};
+struct DebuffBounds {float left=0,right=0,top=0;bool occupied=false;};
 struct TraitLabel {
     std::uint16_t bits=0;
     float scale=1;
@@ -52,5 +59,6 @@ bool ExpandName(const Input& input, std::uint8_t (&codes)[MaxGlyphs], unsigned& 
     unsigned& nameCount, const StatusIcons* icons = nullptr) noexcept;
 // Pure layout: no pointers, graphics calls, allocations, or changes to game state.
 bool Build(const Input& input, Output& output, const StatusIcons* icons = nullptr,
-    const LevelLabel* level = nullptr, const TraitLabel* traits = nullptr) noexcept;
+    const LevelLabel* level = nullptr, const TraitLabel* traits = nullptr,
+    const DebuffRow* debuffs = nullptr, DebuffBounds* bounds = nullptr) noexcept;
 }

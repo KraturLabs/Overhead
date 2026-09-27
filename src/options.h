@@ -15,6 +15,9 @@ struct Options {
     bool showTraits = true;
     bool traitsTargetOnly = false;
     float traitScale = 1;
+    bool showDebuffs = true, debuffsTargetOnly = false;
+    bool selfDebuffs = true, partyDebuffs = true, allianceDebuffs = true;
+    unsigned debuffSize = 16;
     float damageScale = 1, damageWidth = 1;
     bool damageEnabled = false, damageCorrectAspect = false;
     unsigned mode = 3;   // All supported names plus enemy HP, by default.

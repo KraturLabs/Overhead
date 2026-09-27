@@ -21,6 +21,7 @@ bool ValidOptions(const Options& v) noexcept {
         &&std::isfinite(v.width)&&v.width>=.25f&&v.width<=3&&v.filter<=2&&v.mode<=3
         &&std::isfinite(v.levelScale)&&v.levelScale>=.25f&&v.levelScale<=3
         &&std::isfinite(v.traitScale)&&v.traitScale>=.25f&&v.traitScale<=3
+        &&v.debuffSize>=8&&v.debuffSize<=64
         &&std::isfinite(v.damageScale)&&v.damageScale>=.25f&&v.damageScale<=3
         &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3;
 }
@@ -78,6 +79,13 @@ Options LoadOptions(const char* path) noexcept {
     GetPrivateProfileStringA("Nameplates","LevelScale","1",text,sizeof(text),path);ParseFactor(text,out.levelScale);
     out.showTraits=readChoice("ShowTraits",1,1)!=0;
     out.traitsTargetOnly=readChoice("TraitsTargetOnly",0,1)!=0;
+    out.showDebuffs=readChoice("ShowDebuffs",1,1)!=0;
+    out.selfDebuffs=readChoice("SelfDebuffs",1,1)!=0;
+    out.partyDebuffs=readChoice("PartyDebuffs",1,1)!=0;
+    out.allianceDebuffs=readChoice("AllianceDebuffs",1,1)!=0;
+    out.debuffsTargetOnly=readChoice("DebuffsTargetOnly",0,1)!=0;
+    const auto debuffSize=readChoice("DebuffSize",16,64);
+    out.debuffSize=debuffSize>=8?debuffSize:16;
     GetPrivateProfileStringA("Nameplates","TraitScale","1",text,sizeof(text),path);ParseFactor(text,out.traitScale);
     out.mode=readChoice("Mode",3,3);
     GetPrivateProfileStringA("Nameplates","DamageScale","1",text,sizeof(text),path);ParseFactor(text,out.damageScale);
@@ -100,11 +108,12 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     const auto ds=std::to_chars(damageScale,damageScale+sizeof(damageScale)-1,value.damageScale);
     const auto dw=std::to_chars(damageWidth,damageWidth+sizeof(damageWidth)-1,value.damageWidth);
     if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{}||ts.ec!=std::errc{})return false;
-    char content[512]{};
+    char content[768]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nShowLevels=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nShowTraits=%u\r\nTraitScale=%s\r\nLevelsTargetOnly=%u\r\nTraitsTargetOnly=%u\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nShowLevels=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nShowTraits=%u\r\nTraitScale=%s\r\nLevelsTargetOnly=%u\r\nTraitsTargetOnly=%u\r\nShowDebuffs=%u\r\nDebuffsTargetOnly=%u\r\nDebuffSize=%u\r\nSelfDebuffs=%u\r\nPartyDebuffs=%u\r\nAllianceDebuffs=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
-        value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.showLevels?1u:0u,value.autoCheck?1u:0u,levelScale,value.showTraits?1u:0u,traitScale,value.levelsTargetOnly?1u:0u,value.traitsTargetOnly?1u:0u);
+        value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.showLevels?1u:0u,value.autoCheck?1u:0u,levelScale,value.showTraits?1u:0u,traitScale,value.levelsTargetOnly?1u:0u,value.traitsTargetOnly?1u:0u,
+        value.showDebuffs?1u:0u,value.debuffsTargetOnly?1u:0u,value.debuffSize,value.selfDebuffs?1u:0u,value.partyDebuffs?1u:0u,value.allianceDebuffs?1u:0u);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

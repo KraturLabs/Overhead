@@ -19,6 +19,7 @@
 #include "levels.h"
 #include "traits.h"
 #include "trait_texture.h"
+#include "debuff_texture.h"
 #include "options.h"
 #include "client_profile.h"
 #include "native_contract.h"
@@ -64,7 +65,9 @@ bool cursorHooked=false,cursorAttempted=false,cursorReady=false;
 std::atomic<bool> keepCursor{false};
 HMODULE retainedModule=nullptr; // Only a failed teardown retains code; normal unload frees the DLL.
 void ConfigureNative(std::uintptr_t base);
-CursorClearance cursorClearance[2]; // Cleared every scene; future above-name content contributes here.
+CursorClearance cursorClearance[2]; // Only current-scene, actually drawn overhead content.
+
+
 unsigned cursorDraws=0;
 char cursorProblem[160]="off";
 std::atomic<bool> damageFault{false};
@@ -83,6 +86,30 @@ std::atomic<bool> showNameStatusIcons{true};
 std::atomic<bool> showLevels{true},autoCheck{true};
 std::atomic<bool> levelsTargetOnly{false},traitsTargetOnly{false};
 struct DetailTarget { unsigned index=0;std::uint32_t id=0; } detailTarget;
+DetailTarget sceneCursorTargets[2];
+Debuffs debuffs;
+DebuffTexture debuffTexture;
+HRESULT debuffTextureResult=S_OK;
+std::atomic<bool> showDebuffs{true},debuffsTargetOnly{false};
+std::atomic<bool> previewDebuffs{false};
+std::atomic<bool> selfDebuffs{true},partyDebuffs{true},allianceDebuffs{true};
+struct FriendlyDebuffs { DetailTarget identity; DebuffRow row; };
+FriendlyDebuffs friendlyDebuffs[18]; // Current scene only; numeric identities, no native pointers.
+bool AnyDebuffs() noexcept {return showDebuffs||selfDebuffs||partyDebuffs||allianceDebuffs;}
+DebuffRow StatusDebuffs(const std::int16_t* statuses) noexcept {
+    DebuffRow row;
+    if(statuses)for(unsigned i=0;i<32;++i)
+        if(DebuffCell(static_cast<unsigned>(statuses[i]))!=~0u)row.effects[row.count++]=static_cast<std::uint16_t>(statuses[i]);
+    return row;
+}
+DebuffRow StatusDebuffs(const std::uint8_t* statuses,std::uint64_t mask) noexcept {
+    std::int16_t decoded[32];
+    if(!statuses)return {};
+    for(unsigned i=0;i<32;++i)decoded[i]=static_cast<std::int16_t>(statuses[i]|(((mask>>(i*2))&3)<<8));
+    return StatusDebuffs(decoded);
+}
+std::atomic<unsigned> debuffSize{16};
+std::uint32_t sceneSeconds=0;
 Levels levels;
 std::atomic<float> levelScale{1};
 std::atomic<bool> showTraits{true};
@@ -94,6 +121,8 @@ void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;
     showLevels=options.showLevels;autoCheck=options.autoCheck;levelScale=options.levelScale;
     showTraits=options.showTraits;traitScale=options.traitScale;
+    showDebuffs=options.showDebuffs;debuffsTargetOnly=options.debuffsTargetOnly;debuffSize=options.debuffSize;
+    selfDebuffs=options.selfDebuffs;partyDebuffs=options.partyDebuffs;allianceDebuffs=options.allianceDebuffs;
     levelsTargetOnly=options.levelsTargetOnly;traitsTargetOnly=options.traitsTargetOnly;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
     damageCorrectAspect.store(options.damageCorrectAspect);
@@ -158,12 +187,68 @@ void RefreshDetailTarget() noexcept {
     // One current-scene identity for both filters. Collection already validates
     // each visible entity, so do not repeat entity/HP reads or cache pointers.
     detailTarget={};
-    if(requested.load()<2||!((showLevels.load()&&levelsTargetOnly.load())
-        ||(showTraits.load()&&traitsTargetOnly.load()&&traitTexture.value)))return;
+    sceneCursorTargets[0]={};sceneCursorTargets[1]={};
+    const bool debuffCursor=AnyDebuffs()&&debuffTexture.value&&keepCursor.load();
+    if(!requested.load()||!((showLevels.load()&&levelsTargetOnly.load())
+        ||(showTraits.load()&&traitsTargetOnly.load()&&traitTexture.value)
+        ||(showDebuffs.load()&&(debuffsTargetOnly.load()||previewDebuffs.load())&&debuffTexture.value)||debuffCursor))return;
     std::uint32_t controller=0;
     Ashita::FFXI::targetentry_t target;
     if(Read(clientBase+0x57876C,controller)&&controller&&Read(controller,target)&&target.IsActive)
         detailTarget={target.Index,target.ServerId};
+    if(debuffCursor&&controller){
+        sceneCursorTargets[0]=detailTarget;
+        if(Read(controller+sizeof(target),target)&&target.IsActive)sceneCursorTargets[1]={target.Index,target.ServerId};
+    }
+}
+struct DebuffContext { std::uint32_t now; IParty* party; };
+void RefreshFriendlyDebuffs(IMemoryManager* memory) noexcept {
+    for(auto& entry:friendlyDebuffs)entry={};
+    if(!memory||!(selfDebuffs||partyDebuffs||allianceDebuffs))return;
+    auto* party=memory->GetParty();
+    if(!party)return;
+    const auto zone=party->GetMemberZone(0);
+    for(unsigned member=0;member<18;++member){
+        if(!(member==0?selfDebuffs.load():member<6?partyDebuffs.load():allianceDebuffs.load())
+            ||!party->GetMemberIsActive(member)||party->GetMemberZone(member)!=zone)continue;
+        auto& entry=friendlyDebuffs[member];
+        entry.identity={party->GetMemberTargetIndex(member),party->GetMemberServerId(member)};
+        if(member==0){
+            auto* player=memory->GetPlayer();
+            if(player)entry.row=StatusDebuffs(player->GetBuffs());
+        }else if(member<6){
+            // Status entries are keyed by identity, not party roster order.
+            for(unsigned status=0;status<5;++status)
+                if(party->GetStatusIconsServerId(status)==entry.identity.id
+                    &&party->GetStatusIconsTargetIndex(status)==entry.identity.index){
+                    entry.row=StatusDebuffs(party->GetStatusIcons(status),party->GetStatusIconsBitMask(status));break;
+                }
+        }else entry.row=debuffs.Read(entry.identity.index,entry.identity.id,sceneSeconds);
+    }
+}
+void ReceiveDebuff(void* context,const DebuffEvent& event) {
+    const auto& state=*static_cast<DebuffContext*>(context);
+    // Monster IDs encode the local index; keep their existing direct lookup.
+    unsigned index=event.target&0xFFF;
+    const auto matches=[&](unsigned slot,bool player){
+        std::uint32_t entity=0,id=0,flags=0;
+        return slot<0x900&&Read(clientBase+0x480AF0+slot*4,entity)&&entity
+            &&Read(entity+0x78,id)&&id==event.target
+            &&Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),flags)
+            &&(player?(flags&1)!=0:((flags&EnemyFlag)&&!(flags&FriendlyFlags)));
+    };
+    if(!matches(index,false)){
+        // Only alliance lacks an authoritative status list. Player IDs must
+        // be resolved through the bounded roster, not their low ID bits.
+        index=0x900;
+        if(state.party)for(unsigned member=6;member<18;++member)
+            if(state.party->GetMemberIsActive(member)&&state.party->GetMemberServerId(member)==event.target
+                &&state.party->GetMemberZone(member)==state.party->GetMemberZone(0)){
+                index=state.party->GetMemberTargetIndex(member);break;
+            }
+        if(!matches(index,true))return;
+    }
+    debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank);
 }
 bool Problem(const char* value) { strcpy_s(lastProblem,value); return false; }
 
@@ -295,9 +380,19 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
     if(!shape)return 0; // Native resources can be absent during window teardown.
     std::int16_t bottom=0;
     if(hasClearance&&!Read(shape+0x26,bottom))return 0;
+    float uiScaleX=1,uiScaleY=1;
+    if(hasClearance){
+        // Name vertices use render-buffer pixels; cursor anchors use UI units.
+        // Read the current dimensions here so live UI/resolution changes agree.
+        std::uint32_t config=0;std::uint16_t dimensions[6];
+        if(!Read(clientBase+0x4568FC,config)||!config||!ReadBytes(config+0x10,dimensions,sizeof(dimensions))
+            ||!dimensions[2]||!dimensions[3]||!dimensions[4]||!dimensions[5])return 0;
+        uiScaleX=static_cast<float>(dimensions[2])/dimensions[4];
+        uiScaleY=static_cast<float>(dimensions[3])/dimensions[5];
+    }
     const unsigned main=state.m_Sub?1u:0u;
-    const int mainLift=cursorClearance[main].Lift(targets[main].ServerId,state.m_AnkY+bottom-0.5f);
-    const int subLift=state.m_Sub?cursorClearance[0].Lift(targets[0].ServerId,state.m_SubAnkY+bottom-0.5f):0;
+    const int mainLift=cursorClearance[main].Lift(targets[main].ServerId,state.m_AnkY+bottom-0.5f,state.m_AnkX,uiScaleX,uiScaleY);
+    const int subLift=state.m_Sub?cursorClearance[0].Lift(targets[0].ServerId,state.m_SubAnkY+bottom-0.5f,state.m_SubAnkX,uiScaleX,uiScaleY):0;
     // Temporary coordinates affect only this call. Native animation, position
     // updates, resources and main/subtarget colors remain the client's own.
     auto* live=reinterpret_cast<Ashita::FFXI::targetwindow_t*>(window);
@@ -335,10 +430,12 @@ unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
 }
 
 struct Resources {
-    void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[3];
+    void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[4];
     unsigned healthPercent = 100;
     LevelLabel level;
     TraitLabel traits;
+    DebuffRow debuffs;
+    DetailTarget identity;
 };
 bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons* icons=nullptr,bool showIcons=true) noexcept {
     if(icons)*icons={};
@@ -372,6 +469,22 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     bool singleLine=true;
     for(unsigned i=0;i<length;++i)if(input.text[i]==10){resources.healthPercent=100;singleLine=false;}
     const bool selected=detailTarget.id==identity&&detailTarget.index==entityIndex;
+    resources.identity={entityIndex,identity};
+    if(showDebuffs.load(std::memory_order_relaxed)&&debuffTexture.value&&singleLine
+        &&(!debuffsTargetOnly.load(std::memory_order_relaxed)||selected)
+        &&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags)){
+        if(selected&&previewDebuffs.load(std::memory_order_relaxed))
+            resources.debuffs={5,{3,4,5,6,13}};
+        else resources.debuffs=debuffs.Read(entityIndex,identity,sceneSeconds);
+    }
+    if(debuffTexture.value&&singleLine&&(spawnFlags&1))
+        for(const auto& entry:friendlyDebuffs)
+            if(entry.identity.id==identity&&entry.identity.index==entityIndex){resources.debuffs=entry.row;break;}
+    if(resources.debuffs.count){
+        debuffTexture.Filter(resources.debuffs);
+        resources.debuffs.size=static_cast<float>(debuffSize.load(std::memory_order_relaxed));
+        resources.textures[3]=debuffTexture.value;
+    }
     if(showLevels.load(std::memory_order_relaxed)&&(!levelsTargetOnly.load(std::memory_order_relaxed)||selected)
         &&singleLine&&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags))
     {
@@ -562,15 +675,22 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
     unsigned result=0;
     if(mode.load(std::memory_order_acquire)){
         nameplate_lab::Input input{};nameplate_lab::Output output;Resources resources{};StatusIcons icons;
+        DebuffBounds bounds;
         const auto visuals=Visuals();
         intentionallyFiltered=false;
-        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits)){
+        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)
+            &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds)){
             // Once drawing starts, do not redraw the original on top of a partial
             // replacement. A device error turns the feature off for future names.
             result=1;
             DrawProgress progress;
             const bool drawn=Draw(output,resources,nullptr,visuals.filter,&progress);
             if(drawn){
+                if(bounds.occupied&&keepCursor.load(std::memory_order_relaxed))for(unsigned i=0;i<2;++i)
+                    if(sceneCursorTargets[i].id==resources.identity.id&&sceneCursorTargets[i].index==resources.identity.index)
+                    {
+                        cursorClearance[i].IncludeBounds(resources.identity.id,bounds.top,bounds.left,bounds.right);
+                    }
                 replaced.fetch_add(1,std::memory_order_relaxed);
                 if(resources.healthPercent<100)healthNames.fetch_add(1,std::memory_order_relaxed);
             }else{nameFault.store(true);lastDrawFailure=progress;result=progress.nativeSafe?0:1;drawingErrors.fetch_add(1,std::memory_order_relaxed);mode.store(0);requested.store(0);}
@@ -636,12 +756,22 @@ public:
         if(injected||!data)return false;
         if((id==0x00A||id==0x00B)&&!blocked){
             levels.Clear();
+            debuffs.Clear();
             traitZone.store(id==0x00A&&size>=0x32?PacketValue<std::uint16_t>(data,0x30):0);
             return false;
         }
         if(id==0x00E&&!blocked&&size>=0x0B){
-            if((data[0x0A]&0x20)||(size>=0x20&&(data[0x0A]&4)&&data[0x1E]==0))
+            if((data[0x0A]&0x20)||(size>=0x20&&(data[0x0A]&4)&&data[0x1E]==0)){
                 levels.Forget(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4));
+                debuffs.Forget(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4));
+            }
+        }
+        // Original server combat data remains meaningful if a chat formatter
+        // blocks it later. Observation never changes the packet/block result.
+        if(id==0x028||id==0x029){
+            auto* memory=core_?core_->GetMemoryManager():nullptr;
+            DebuffContext context{static_cast<std::uint32_t>(GetTickCount64()/1000),memory?memory->GetParty():nullptr};
+            DecodeDebuffs(id,data,size,&context,ReceiveDebuff);
         }
         if(id!=0x029||size<0x1C)return false;
         const auto message=PacketValue<std::uint16_t>(data,0x18)&0x7FFF;
@@ -673,7 +803,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.810;}
+    double GetVersion()const override{return 0.905;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -682,6 +812,7 @@ public:
     bool Direct3DInitialize(IDirect3DDevice8* device)override{
         if(!device)return false;
         traitTextureResult=traitTexture.Initialize(device);
+        debuffTextureResult=debuffTexture.Initialize(device,core_?core_->GetResourceManager():nullptr);
         if(FAILED(traitTextureResult)&&core_)
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Trait artwork unavailable (%08X); names and levels remain available.",static_cast<unsigned>(traitTextureResult));
         return true;
@@ -691,7 +822,10 @@ public:
         unsigned zero=0;
         if(!instances.compare_exchange_strong(zero,1))return false;
         owns_=true;core_=core;
+        previewDebuffs=false;
+        for(auto& entry:friendlyDebuffs)entry={};
         levels.Clear();
+        debuffs.Clear();
         const auto memory=core_->GetMemoryManager();
         const auto party=memory?memory->GetParty():nullptr;
         traitZone.store(party?party->GetMemberZone(0):0);
@@ -708,7 +842,7 @@ public:
         damageAdjusted.store(0);damageRejected.store(0);
         mode.store(0);requested.store(options_.mode);
         replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);filteredNames.store(0);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.8.1] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
+        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.9.5] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
         return true;
     }
     void Release()override{
@@ -733,7 +867,8 @@ public:
                 reinterpret_cast<LPCWSTR>(&NameplateGate),&retainedModule);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Unload could not detach safely (%s). Drawing disabled; DLL retained. Restart before replacing it.",lastProblem);
         }
-        if(detached)traitTexture.Release();
+        if(detached){traitTexture.Release();debuffTexture.Release();}
+        debuffs.Clear();
         core_=nullptr;owns_=false;instances.store(0);
     }
     bool HandleCommand(std::int32_t,const char* command,bool injected)override{
@@ -745,6 +880,12 @@ public:
         else if(_stricmp(option,"all")==0){SelectMode(2);}
         else if(_stricmp(option,"hp")==0){SelectMode(3);}
         else if(_stricmp(option,"original")==0||_stricmp(option,"off")==0){SelectMode(0);}
+        else if(_strnicmp(option,"debuffs ",8)==0){
+            const auto* setting=option+8;
+            if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){
+                options_.showDebuffs=_stricmp(setting,"on")==0;ChangedVisuals();
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] debuffs on | off");
+        }
         else if(_strnicmp(option,"traits ",7)==0){
             const auto setting=option+7;
             if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){
@@ -810,7 +951,7 @@ public:
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | levels on|off | autocheck on|off | traits on|off | damage <setting> | reset | status");
+        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | levels on|off | autocheck on|off | traits on|off | debuffs on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -902,6 +1043,23 @@ public:
             gui->TextUnformatted("True sight / sight / sound / magic / job ability / blood / link");
             gui->TextUnformatted("Red: aggressive   Blue: passive   Missing data: hidden");
             if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
+            gui->SeparatorText("Debuffs");
+            changed=gui->Checkbox("Show enemy debuffs",&options_.showDebuffs)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Effects observed while loaded. Unknown earlier effects stay hidden; stale observations expire after five minutes.");
+            changed=gui->Checkbox("Enemies: only on current target##debuffs",&options_.debuffsTargetOnly)||changed;
+            bool preview=previewDebuffs.load();
+            if(gui->Checkbox("Preview sample debuffs on target",&preview))previewDebuffs=preview;
+            if(gui->IsItemHovered())gui->SetTooltip("Select an enemy with Show enemy debuffs enabled. Shows poison, paralysis, blindness, silence and slow. Preview is not saved; turn it off to show observed effects.");
+            changed=gui->Checkbox("Show debuffs on self",&options_.selfDebuffs)||changed;
+            changed=gui->Checkbox("Show debuffs on party",&options_.partyDebuffs)||changed;
+            changed=gui->Checkbox("Show debuffs on alliance",&options_.allianceDebuffs)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Alliance effects are observed from combat while loaded; unseen effects are unknown. Self and party use current status lists.");
+            int iconSize=static_cast<int>(options_.debuffSize);
+            if(gui->SliderInt("Debuff icon size",&iconSize,8,64,"%d",ImGuiSliderFlags_AlwaysClamp)){
+                options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;
+            }
+            if(gui->Button("Reset debuff size")){options_.debuffSize=16;changed=true;}
+            if(FAILED(debuffTextureResult))gui->TextUnformatted("Debuff artwork unavailable; reload the plugin to try again.");
             gui->EndTabItem();
             }
             gui->EndTabBar();
@@ -919,6 +1077,10 @@ public:
         // thread before installing hooks, not the device initialization caller.
         if(!renderThread_)renderThread_=GetCurrentThreadId();
         RefreshDetailTarget();
+        if(requested.load()&&AnyDebuffs()&&debuffTexture.value){
+            sceneSeconds=static_cast<std::uint32_t>(GetTickCount64()/1000);
+            RefreshFriendlyDebuffs(core_?core_->GetMemoryManager():nullptr);
+        }else for(auto& entry:friendlyDebuffs)entry={};
         cursorClearance[0]={};cursorClearance[1]={};
         if(cursorHooked){
             unsigned char bytes[5];

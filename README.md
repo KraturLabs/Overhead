@@ -1,6 +1,6 @@
 # NameplateLab
 
-An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.8.1**, a single unloadable DLL. Supports one verified client build; other clients refuse compatibility checks.
+An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.5**, a single unloadable DLL. Supports one verified client build; other clients refuse compatibility checks.
 
 ## Features
 
@@ -13,8 +13,9 @@ An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. C
 - Monster levels beside the name, colored by the observed check difficulty. Unknown levels stay hidden; confirmed impossible-to-gauge monsters show magenta `Lv.???`. Automatic checks are silent; manual `/check` output remains visible. Display and automatic checking have separate saved toggles, both on by default.
 - Monster detection/linking icons and an aggression strip to the left of the level/name. True sight, sight, sound, magic, job ability, blood and link; true sight replaces ordinary sight. Red means aggressive, blue means passive, and unknown data stays hidden. These are database defaults, not current hostility; private-server behavior may differ.
 - Saved settings; update in game with unload, replace the DLL, then load.
+- Observed enemy debuffs in a centered icon row above the name, with independent display, target-only and size controls. Uses the client's status artwork through Ashita resources; no addon dependency.
 
-Damage adjustments start off; the hook is installed on first use. Setup failures report their cause; `/nplab damage retry` retries after resolving a conflict. The cursor can rise above content placed over the name and return when that space is clear. Current content does not occupy that area; the shared clearance input is ready for future indicators. The 0.6.3 names, damage and cursor baseline was accepted in game. The 0.7.1 level feature is accepted in game: levels display, automatic checks stay silent with SimpleLog, and manual checks remain visible.
+Damage adjustments start off; the hook is installed on first use. Setup failures report their cause; `/nplab damage retry` retries after resolving a conflict. With Keep native overhead cursor enabled, the cursor uses the drawn debuff row's bounds to rise above it and return when it disappears. The 0.9.5 debuff display, corrected icon colors, cursor clearance and steady debuff opacity have been accepted in game. The 0.6.3 names, damage and cursor baseline was accepted in game. The 0.7.1 level feature is accepted in game: levels display, automatic checks stay silent with SimpleLog, and manual checks remain visible.
 
 ## Build
 
@@ -62,6 +63,8 @@ The settings window has General and Details tabs. General contains names, cursor
 /nplab autocheck off
 /nplab traits on
 /nplab traits off
+/nplab debuffs on
+/nplab debuffs off
 /nplab damage fit
 /nplab damage size 1.2
 /nplab damage width 0.8
@@ -107,3 +110,17 @@ The generated inputs are checked in, so normal builds need neither network acces
 The independent **Only on current target** checkboxes under Monster levels and Monster traits restrict that detail to the selected enemy. Previously learned levels remain stored under the same rules as before; switching away hides the label, and retargeting reveals it without another reply. Zoning, despawn/death and unload still invalidate learned levels as before. Automatic/manual checking is unchanged.
 
 Both filters share one current-scene target identity, read only while a target-only detail is enabled in All/HP mode. Each visible entity is already identity-checked by name collection. Other enemies skip the restricted level/trait lookup, optional glyph collection, layout and submissions. Normal names/HP and level packet tracking continue. This removes work but is not a measured FPS improvement.
+
+### Debuffs
+
+Details contains independent **Show enemy debuffs**, **Show debuffs on self**, **Show debuffs on party**, and **Show debuffs on alliance** toggles (default on). **Enemies: only on current target** defaults off. **Debuff icon size** (8-64, default 16) applies to every row. Icons follow the existing name size/width settings. Debuff opacity stays fixed instead of following nameplate fades; the artwork retains its own transparency. The row shares the name layout and draw pass and does not shift the name, levels, traits or HP fill. Rows appear only where the game draws a supported name; this does not force hidden self or party names to appear.
+
+**Preview sample debuffs on target** temporarily substitutes poison, paralysis, blindness, silence and slow on your selected enemy. Enable Show enemy debuffs, select an enemy, then adjust Debuff icon size. Turn preview off to return to observed effects. Preview is not saved and never changes tracked effects.
+
+Self and your own party use the SDK's current status lists, filtered to supported negative effects. Removed effects disappear on the next scene update. Only active members in your current zone are eligible, and status entries must match both server ID and entity index. These lists can show effects already present when the plugin loads.
+
+The SDK exposes status lists for your own party only. For enemies and the other two alliance parties, the plugin learns successful negative effects from combat events observed while loaded, including additional effects and Dancer steps. Wear-off/removal, defeat, despawn and zoning clear observations; positive damage removes sleep and Lullaby. Refreshes update an existing effect instead of adding duplicates. Dia/Bio are inferred from successful damage results, preserving the stronger known tier. Earlier or out-of-range effects remain unknown. Unrefreshed observations disappear after five minutes; this is a stale-data cutoff, not a prediction of the actual duration. Up to 32 effects per observed entity are retained. Step levels above five use the client's fifth-level icon.
+
+Hiding icons or selecting enemy target-only display preserves tracking. `/nplab debuffs on|off` controls enemies; friendly display has separate toggles. No combat packets are injected, changed or blocked by this feature. It supports a fixed set of 94 negative-status icons; unrecognized effects remain hidden. Server-specific result coverage, full alliance tracking and long-session behavior have not been comprehensively verified.
+
+The SDK's status resources populate one managed 512×256 atlas during graphics initialization. No game artwork is embedded or distributed. Missing artwork omits the affected icon; an unavailable atlas leaves names and other details intact. Tracking uses bounded numeric state, a lock for packet writers, and atomic reads while drawing. Friendly rows use an 18-member numeric snapshot refreshed once per scene; alliance combat resolves player IDs through the roster. There is no additional actor scan, hook, worker, per-name allocation or native pointer cache. No isolated speedup or 40+ name capacity has been measured.

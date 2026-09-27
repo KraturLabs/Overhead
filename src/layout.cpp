@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "debuffs.h"
 #include "traits.h"
 #include <algorithm>
 #include <cmath>
@@ -54,7 +55,9 @@ bool ExpandName(const Input& in, std::uint8_t (&codes)[MaxGlyphs], unsigned& cou
     return true;
 }
 
-bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLabel* level, const TraitLabel* traits) noexcept {
+bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLabel* level, const TraitLabel* traits,
+    const DebuffRow* debuffs,DebuffBounds* bounds) noexcept {
+    if(bounds)*bounds={};
     out.count = 0;
     if (in.length > MaxGlyphs || !finite(in.x) || !finite(in.y) || !finite(in.z)
         || !finite(in.scaleX) || !finite(in.scaleY) || in.scaleX <= 0 || in.scaleY <= 0
@@ -185,14 +188,35 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             const float height=textReference->height*.75f;
             const float y=textReference->offsetY+(textReference->height-height)*.5f;
             quad(right-2,y-.5f,2,height+1,7,alpha);
-            quad(right-1.5f,y,1,height,7,alpha|((traits->bits&Aggressive)?0xD87878u:0x789FC4u));
+            // Half-intensity tint preserves the intended red/blue under native 2x modulation.
+            quad(right-1.5f,y,1,height,7,alpha|((traits->bits&Aggressive)?0x6C3C3Cu:0x3C4F62u));
             right-=4;
         }
         for(int flag=6;flag>=0;--flag){
             if(!(traits->bits&(1u<<flag)))continue;
-            quad(right-size,top,size,size,static_cast<unsigned>(flag),alpha|0xFFFFFFu);
+            // Match native neutral RGB under doubled color modulation.
+            quad(right-size,top,size,size,static_cast<unsigned>(flag),alpha|0x808080u);
             right-=size+2*traits->scale;
         }
+    }
+    if(debuffs&&debuffs->count&&debuffs->count<=MaxDebuffs&&textReference){
+        const float size=debuffs->size,iconGap=2;
+        const float width=debuffs->count*(size+iconGap)-iconGap;
+        const float left=-width*.5f;
+        float top=static_cast<float>(textReference->offsetY);
+        for(unsigned i=0;i<out.count;++i)top=std::min(top,(out.quads[i].vertices[0].y-in.y)/in.scaleY);
+        top-=size+2;
+        // Native overhead rendering doubles color and alpha modulation.
+        // Keep icon opacity fixed, independent of the nameplate fade.
+        for(unsigned i=0;i<debuffs->count;++i){
+            const auto cell=DebuffCell(debuffs->effects[i]);
+            auto& q=out.quads[out.count++];q.code=0x300u+debuffs->effects[i];q.textureGroup=3;q.alphaReference=0;
+            for(unsigned v=0;v<4;++v)q.vertices[v]={
+                in.x+in.scaleX*(left+i*(size+iconGap)+(v&1?size:0)),
+                in.y+in.scaleY*(top+(v&2?size:0)),in.z,1,0x80808080u,
+                (cell%16*32+(v&1?31.5f:.5f))/512,(cell/16*32+(v&2?31.5f:.5f))/256};
+        }
+        if(bounds)*bounds={in.x+in.scaleX*left,in.x+in.scaleX*(left+width),in.y+in.scaleY*top,true};
     }
     return true;
 }
