@@ -576,6 +576,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         resources.level=levels.Label(entityIndex,identity);
         resources.level.scale=levelScale.load(std::memory_order_relaxed);
         resources.level.reserve=true;
+        if(!resources.level.length){resources.level.length=5;std::memcpy(resources.level.text,"Lv.??",5);} // Placeholder until known.
     }
     if((features&ShowTraits)&&enemy&&traitTexture.value){
         // Use the already validated visible entity; never scan actors or retain
@@ -684,7 +685,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         if(!loadGlyph(i<count?codes[i]:std::uint8_t(32)))return false;
     if(resources.level.length||resources.level.reserve){
         bool ready=loadGlyph(32);
-        for(const char code:{'L','v','.','0'})ready=ready&&loadGlyph(static_cast<std::uint8_t>(code)); // Reserved width.
+        for(const char code:{'L','v','.','0','?'})ready=ready&&loadGlyph(static_cast<std::uint8_t>(code)); // Reserved width.
         for(unsigned i=0;ready&&i<resources.level.length;++i)
             ready=loadGlyph(static_cast<std::uint8_t>(resources.level.text[i]));
         if(!ready)resources.level={}; // Missing optional glyphs do not suppress the name.

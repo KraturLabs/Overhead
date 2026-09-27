@@ -203,16 +203,20 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     };
     if(level&&(level->reserve||level->length)&&level->length<=6&&nameCount&&validGlyph(in.glyphs[32])){
         // "Lv." (60% size) and the number are white like the distance; only the check rank carries the color.
-        // While unknown, "Lv.00" room is held so the details beside it do not shift when it arrives.
+        // With reserve, the number sits left-aligned in a fixed "Lv.00"/"Lv.??" slot so details
+        // left of it do not move as the level arrives; only 3-digit levels widen it.
         constexpr unsigned Prefix=3;constexpr float PrefixSize=.6f;
         const bool shown=level->length>Prefix;
-        float prefixWidth=0,width=0,reserved=0;
+        float prefixWidth=0,width=0,digits=0,unknown=0;
         if(!measure("Lv.",Prefix,prefixWidth)||(shown&&!measure(level->text+Prefix,level->length-Prefix,width)))return true;
-        if(level->reserve&&!measure("00",2,reserved))reserved=0;
+        if(level->reserve){
+            if(measure("00",2,digits))width=std::max(width,digits);
+            if(measure("??",2,unknown))width=std::max(width,unknown);
+        }
         const float space=static_cast<float>(in.glyphs[32].width);
-        detailLeft=std::min(detailLeft,iconStart-(prefixWidth*PrefixSize+std::max(width,reserved))*level->scale-space);
+        const float labelPen=iconStart-(prefixWidth*PrefixSize+width)*level->scale-space;
+        detailLeft=std::min(detailLeft,labelPen);
         if(shown){
-            const float labelPen=iconStart-(prefixWidth*PrefixSize+width)*level->scale-space;
             const auto first=out.count;
             detailLeft=std::min(detailLeft,write(level->text,Prefix,0x808080u,level->scale*PrefixSize,labelPen,0));
             write(level->text+Prefix,level->length-Prefix,0x808080u,level->scale,labelPen+prefixWidth*PrefixSize*level->scale,0);
