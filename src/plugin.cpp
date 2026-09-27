@@ -528,10 +528,10 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     std::uint8_t hp=0;
     const bool hpKnown=Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100;
     // The first matching category decides this name's details. Other players and
-    // NPCs match none unless selected.
+    // NPCs match none unless selected. You keep your own row even when targeted.
     unsigned row=RowCount;
-    if(selected)row=RowTarget;
-    else if(member==0)row=RowSelf;
+    if(member==0)row=RowSelf;
+    else if(selected)row=RowTarget;
     else if(member<18)row=RowParty;
     else if(enemy){
         std::uint32_t claim=0;
