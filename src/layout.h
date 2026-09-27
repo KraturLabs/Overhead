@@ -26,6 +26,7 @@ struct LevelLabel {
     unsigned checkLength=0;
     std::uint32_t color=0;
     float scale=1; // User factor relative to the existing name size.
+    bool reserve=false; // Hold "Lv.00" room while the level is still unknown so details do not shift.
 };
 // Native-font text beside or below the name. Missing glyphs omit only the label.
 struct TextLabel {
