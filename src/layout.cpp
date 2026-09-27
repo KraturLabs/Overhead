@@ -112,11 +112,12 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     const float gap = iconCount ? static_cast<float>(in.glyphs[32].width) : 0;
     const float iconStart = start - iconAdvance - gap;
     float detailLeft=iconStart;
+    unsigned iconFirst=0,iconEnd=0; // Detached prefix quads.
     for (unsigned i = 0; i < count; ++i) {
         const auto code = codes[i];
         if (code == 10) { pen = start; line += 8; continue; }
         const bool detached = i >= nameCount;
-        if (detached && i == nameCount) { pen = iconStart; line = 0; }
+        if (detached && i == nameCount) { pen = iconStart; line = 0; iconFirst = out.count; }
         const unsigned index = detached ? i - nameCount : i;
         const auto& g = in.glyphs[code];
         const auto size = sizes[i];
@@ -157,6 +158,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             };
         }
     }
+    if(iconCount)iconEnd=out.count;
     mark(0,RowShow);
     // Native-font runs: decorations (0x100|code) stay out of HP bounds/coloring.
     // Scale grows from the run's own baseline; shift moves it down in local units.
@@ -297,8 +299,9 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const float width=debuffs->count*(size+iconGap)-iconGap;
         const float left=-width*.5f;
         float top=static_cast<float>(textReference->offsetY);
-        for(unsigned i=0;i<out.count;++i)top=std::min(top,(out.quads[i].vertices[0].y-in.y)/in.scaleY);
-        top-=size+2;
+        // Taller detached name icons sit off to the left; they do not lift the row.
+        for(unsigned i=0;i<out.count;++i)if(i<iconFirst||i>=iconEnd)top=std::min(top,(out.quads[i].vertices[0].y-in.y)/in.scaleY);
+        top-=size+1;
         for(unsigned i=0;i<debuffs->count;++i){
             const auto cell=DebuffCell(debuffs->effects[i]);
             auto& q=out.quads[out.count++];q.code=0x300u+debuffs->effects[i];q.textureGroup=3;q.alphaReference=0;
