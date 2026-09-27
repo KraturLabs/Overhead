@@ -101,6 +101,7 @@ Options LoadOptions(const char* path) noexcept {
     const auto debuffSize=readChoice("DebuffSize",16,64);
     out.debuffSize=debuffSize>=8?debuffSize:16;
     out.unclaimedDamagedOnly=readChoice("UnclaimedDamagedOnly",0,1)!=0;
+    out.npcFeatures=readChoice("NpcFeatures",0,1)!=0;
     out.friendlyHealth=readChoice("FriendlyHealth",0,1)!=0;
     out.scrollXp=readChoice("ScrollXp",0,1)!=0;
     out.xpUp=readChoice("XpUp",0,1)!=0;
@@ -166,13 +167,13 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{}||ts.ec!=std::errc{}||xs.ec!=std::errc{}||as.ec!=std::errc{}||gm.ec!=std::errc{})return false;
     char content[1536]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nTraitScale=%s\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nLabelScale=%s\r\nActionScale=%s\r\nScrollXp=%u\r\nXpUp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nTraitScale=%s\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nLabelScale=%s\r\nActionScale=%s\r\nScrollXp=%u\r\nXpUp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,levelScale,traitScale,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
         value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.friendlyHealth?1u:0u,labelScale,actionScale,value.scrollXp?1u:0u,value.xpUp?1u:0u,
         value.growTarget?1u:0u,growFarSize,value.front[0],value.front[1],value.front[2],value.front[3],
-        value.front[4],value.front[5],value.front[6]);
+        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

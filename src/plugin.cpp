@@ -103,7 +103,7 @@ HRESULT debuffTextureResult=S_OK;
 std::atomic<bool> previewDebuffs{false};
 std::atomic<unsigned> rowFeatures[RowCount]; // Saved per-category detail columns.
 std::atomic<unsigned> rowFront[RowCount]; // Parts each category draws on top.
-std::atomic<bool> unclaimedDamagedOnly{false},friendlyHealth{false};
+std::atomic<bool> unclaimedDamagedOnly{false},friendlyHealth{false},npcFeatures{false};
 // Whether any shown row enables this detail column.
 bool AnyRows(unsigned column) noexcept {
     for(const auto& row:rowFeatures){const auto value=row.load(std::memory_order_relaxed);if((value&RowShow)&&(value&column))return true;}
@@ -143,7 +143,7 @@ void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;hideTarget=options.hideTarget;
     autoCheck=options.autoCheck;levelScale=options.levelScale;traitScale=options.traitScale;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
-    unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;
+    unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;npcFeatures=options.npcFeatures;
     labelScale=options.labelScale;actionScale=options.actionScale;scrollXp=options.scrollXp;xpUp=options.xpUp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
@@ -503,8 +503,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         if(entityIndex!=playerIndex){intentionallyFiltered=true;return false;}
     }
     std::uint32_t spawnFlags=0;
-    if((icons||mode.load(std::memory_order_relaxed)==3)
-        &&!Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),spawnFlags))return false;
+    if(!Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),spawnFlags))return false;
     if(mode.load(std::memory_order_relaxed)==3){
         std::uint8_t hp=100;
         if((spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags)
@@ -526,13 +525,15 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     unsigned member=18;
     for(unsigned m=0;m<18;++m)
         if(sceneMembers[m].identity.id==identity&&sceneMembers[m].identity.index==entityIndex){member=m;break;}
+    // NPCs (not players, monsters or trusts in your party) get no details, even targeted.
+    const bool plainNpc=!(spawnFlags&1)&&!enemy&&member==18&&!npcFeatures.load(std::memory_order_relaxed);
     std::uint8_t hp=0;
     const bool hpKnown=Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100;
     // The first matching category decides this name's details. Other players and
     // NPCs match none unless selected. You keep your own row even when targeted.
     unsigned row=RowCount;
     if(member==0)row=RowSelf;
-    else if(selected)row=RowTarget;
+    else if(selected&&!plainNpc)row=RowTarget;
     else if(member<18)row=RowParty;
     else if(enemy){
         std::uint32_t claim=0;
@@ -559,7 +560,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     bool preview=false;
     if(previewDebuffs.load(std::memory_order_relaxed)&&singleLine){
         std::uint16_t playerIndex=0;
-        preview=selected||(Read(clientBase+native.playerIndex,playerIndex)&&playerIndex==entityIndex);
+        preview=(selected&&!plainNpc)||(Read(clientBase+native.playerIndex,playerIndex)&&playerIndex==entityIndex);
     }
     if(preview){if(debuffTexture.value)resources.debuffs={5,{3,4,5,6,13}};}
     else if((features&ShowDebuffs)&&debuffTexture.value){
@@ -574,8 +575,8 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     if((features&ShowLevel)&&enemy){
         resources.level=levels.Label(entityIndex,identity);
         resources.level.scale=levelScale.load(std::memory_order_relaxed);
-    }
         resources.level.reserve=true;
+    }
     if((features&ShowTraits)&&enemy&&traitTexture.value){
         // Use the already validated visible entity; never scan actors or retain
         // its native pointer. Only the first 24 bytes are the entity name.
@@ -683,8 +684,8 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         if(!loadGlyph(i<count?codes[i]:std::uint8_t(32)))return false;
     if(resources.level.length||resources.level.reserve){
         bool ready=loadGlyph(32);
-        for(unsigned i=0;ready&&i<resources.level.length;++i)
         for(const char code:{'L','v','.','0'})ready=ready&&loadGlyph(static_cast<std::uint8_t>(code)); // Reserved width.
+        for(unsigned i=0;ready&&i<resources.level.length;++i)
             ready=loadGlyph(static_cast<std::uint8_t>(resources.level.text[i]));
         if(!ready)resources.level={}; // Missing optional glyphs do not suppress the name.
         for(unsigned i=0;ready&&i<resources.level.checkLength;++i)
@@ -1250,6 +1251,8 @@ public:
             }
             gui->TextUnformatted("Target, then you, party/alliance, then enemies by claim.");
             gui->TextUnformatted("Other players and NPCs show details only while targeted.");
+            changed=gui->Checkbox("Apply features to NPCs",&options_.npcFeatures)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Off: targeted NPCs show no HP%%, distance or other details.");
             changed=gui->Checkbox("Unclaimed: only once damaged",&options_.unclaimedDamagedOnly)||changed;
             changed=gui->Checkbox("Deplete your and party/alliance names by HP",&options_.friendlyHealth)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Like monster HP: the lost part dims. Below 75%% the rest takes the HP%% color.");

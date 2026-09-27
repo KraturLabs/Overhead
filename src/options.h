@@ -34,6 +34,7 @@ struct Options {
     unsigned rows[RowCount] = {DefaultRows[0],DefaultRows[1],DefaultRows[2],DefaultRows[3],DefaultRows[4],DefaultRows[5],DefaultRows[6]};
     unsigned front[RowCount] = {DefaultFront[0],DefaultFront[1],DefaultFront[2],DefaultFront[3],DefaultFront[4],DefaultFront[5],DefaultFront[6]};
     bool friendlyHealth = false; // Deplete your own and party/alliance names by HP.
+    bool npcFeatures = false; // NPCs keep the native plate unless on.
     bool unclaimedDamagedOnly = false; // Unclaimed row only once the monster is damaged.
     float labelScale = 1, actionScale = .6f; // HP%/distance and action sizes.
     bool scrollXp = false; // Experimental: gained points drift from your name.
