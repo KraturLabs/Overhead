@@ -20,6 +20,7 @@ bool ValidOptions(const Options& v) noexcept {
     return std::isfinite(v.scale)&&v.scale>=.25f&&v.scale<=3
         &&std::isfinite(v.width)&&v.width>=.25f&&v.width<=3&&v.filter<=2&&v.mode<=3
         &&std::isfinite(v.levelScale)&&v.levelScale>=.25f&&v.levelScale<=3
+        &&std::isfinite(v.traitScale)&&v.traitScale>=.25f&&v.traitScale<=3
         &&std::isfinite(v.damageScale)&&v.damageScale>=.25f&&v.damageScale<=3
         &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3;
 }
@@ -72,8 +73,12 @@ Options LoadOptions(const char* path) noexcept {
     out.keepCursor=readChoice("KeepCursor",0,1)!=0;
     out.showStatusIcons=readChoice("ShowStatusIcons",1,1)!=0;
     out.showLevels=readChoice("ShowLevels",1,1)!=0;
+    out.levelsTargetOnly=readChoice("LevelsTargetOnly",0,1)!=0;
     out.autoCheck=readChoice("AutoCheck",1,1)!=0;
     GetPrivateProfileStringA("Nameplates","LevelScale","1",text,sizeof(text),path);ParseFactor(text,out.levelScale);
+    out.showTraits=readChoice("ShowTraits",1,1)!=0;
+    out.traitsTargetOnly=readChoice("TraitsTargetOnly",0,1)!=0;
+    GetPrivateProfileStringA("Nameplates","TraitScale","1",text,sizeof(text),path);ParseFactor(text,out.traitScale);
     out.mode=readChoice("Mode",3,3);
     GetPrivateProfileStringA("Nameplates","DamageScale","1",text,sizeof(text),path);ParseFactor(text,out.damageScale);
     GetPrivateProfileStringA("Nameplates","DamageWidth","1",text,sizeof(text),path);ParseFactor(text,out.damageWidth);
@@ -89,16 +94,17 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     if(s.ec!=std::errc{}||w.ec!=std::errc{})return false;
     _snprintf_s(filter,sizeof(filter),_TRUNCATE,"%u",value.filter);
     _snprintf_s(mode,sizeof(mode),_TRUNCATE,"%u",value.mode);
-    char damageScale[32]{},damageWidth[32]{},levelScale[32]{};
+    char damageScale[32]{},damageWidth[32]{},levelScale[32]{},traitScale[32]{};
+    const auto ts=std::to_chars(traitScale,traitScale+sizeof(traitScale)-1,value.traitScale);
     const auto ls=std::to_chars(levelScale,levelScale+sizeof(levelScale)-1,value.levelScale);
     const auto ds=std::to_chars(damageScale,damageScale+sizeof(damageScale)-1,value.damageScale);
     const auto dw=std::to_chars(damageWidth,damageWidth+sizeof(damageWidth)-1,value.damageWidth);
-    if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{})return false;
+    if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||ls.ec!=std::errc{}||ts.ec!=std::errc{})return false;
     char content[512]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nShowLevels=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nShowLevels=%u\r\nAutoCheck=%u\r\nLevelScale=%s\r\nShowTraits=%u\r\nTraitScale=%s\r\nLevelsTargetOnly=%u\r\nTraitsTargetOnly=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
-        value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.showLevels?1u:0u,value.autoCheck?1u:0u,levelScale);
+        value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.showLevels?1u:0u,value.autoCheck?1u:0u,levelScale,value.showTraits?1u:0u,traitScale,value.levelsTargetOnly?1u:0u,value.traitsTargetOnly?1u:0u);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

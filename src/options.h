@@ -10,7 +10,11 @@ struct Options {
     bool keepCursor = false; // Opt-in native arrow when the target panel is hidden.
     bool showStatusIcons = true; // Independent party / bazaar / linkshell icons, detached left.
     bool showLevels = true, autoCheck = true;
+    bool levelsTargetOnly = false;
     float levelScale = 1;
+    bool showTraits = true;
+    bool traitsTargetOnly = false;
+    float traitScale = 1;
     float damageScale = 1, damageWidth = 1;
     bool damageEnabled = false, damageCorrectAspect = false;
     unsigned mode = 3;   // All supported names plus enemy HP, by default.

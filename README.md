@@ -1,6 +1,6 @@
 # NameplateLab
 
-An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.7.2**, a single unloadable DLL. Supports one verified client build; other clients refuse compatibility checks.
+An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.8.1**, a single unloadable DLL. Supports one verified client build; other clients refuse compatibility checks.
 
 ## Features
 
@@ -11,6 +11,7 @@ An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. C
 - Name filtering: Native, Sharp or Smooth. Uses loaded game artwork, including XIPivot overrides.
 - Opt-in native overhead cursor when an addon hides the target panel; keeps the game's arrow animation and main/subtarget colors.
 - Monster levels beside the name, colored by the observed check difficulty. Unknown levels stay hidden; confirmed impossible-to-gauge monsters show magenta `Lv.???`. Automatic checks are silent; manual `/check` output remains visible. Display and automatic checking have separate saved toggles, both on by default.
+- Monster detection/linking icons and an aggression strip to the left of the level/name. True sight, sight, sound, magic, job ability, blood and link; true sight replaces ordinary sight. Red means aggressive, blue means passive, and unknown data stays hidden. These are database defaults, not current hostility; private-server behavior may differ.
 - Saved settings; update in game with unload, replace the DLL, then load.
 
 Damage adjustments start off; the hook is installed on first use. Setup failures report their cause; `/nplab damage retry` retries after resolving a conflict. The cursor can rise above content placed over the name and return when that space is clear. Current content does not occupy that area; the shared clearance input is ready for future indicators. The 0.6.3 names, damage and cursor baseline was accepted in game. The 0.7.1 level feature is accepted in game: levels display, automatic checks stay silent with SimpleLog, and manual checks remain visible.
@@ -45,7 +46,7 @@ If upgrading from the old resident-loader version, exit the game once before rep
 /nplab status
 ```
 
-The settings window has General and Details tabs. General contains names, cursor and damage controls. Details contains the level display/automatic-check toggles and a live Level size slider (25-300%, relative to name size), with a reset to 100%. Level size is saved independently. The Details tab and live size control were accepted in game in 0.7.2. Settings save under the Ashita installation's `config/nameplatelab/settings.ini`.
+The settings window has General and Details tabs. General contains names, cursor and damage controls. Details contains the level display/automatic-check toggles and a live Level size slider (25-300%, relative to name size), with a reset to 100%. Level size is saved independently. The Details tab and live size control were accepted in game in 0.7.2. Details also contains a saved monster-traits toggle (on by default), an independent live Trait size slider (25-300%), and Reset trait size. The 0.8.0 traits were accepted in game. Each Details section now has its own saved **Only on current target** option; these default off to preserve existing settings. The target filters and subtle separator were accepted in game in 0.8.1. Settings save under the Ashita installation's `config/nameplatelab/settings.ini`.
 
 ```text
 /nplab fit
@@ -59,6 +60,8 @@ The settings window has General and Details tabs. General contains names, cursor
 /nplab levels off
 /nplab autocheck on
 /nplab autocheck off
+/nplab traits on
+/nplab traits off
 /nplab damage fit
 /nplab damage size 1.2
 /nplab damage width 0.8
@@ -71,7 +74,7 @@ If cleanup reports that the DLL was retained, exit the game before replacing it.
 
 ## Compatibility and verification
 
-Keep the original Nameplate plugin unloaded. Monster-trait indicators are not implemented yet. Disable BattleSight automatic checking (`/bs autocheck off`) when using NameplateLab automatic checking, so only one feature owns silent check requests. Disable BattleSight's cursor forcing before testing this cursor feature to avoid duplicate arrows; NameplateLab does not change other addons. The supported shared submission-entry detour is left unchanged; unknown changes to the guarded name/damage routines refuse compatibility checks. This is not universal addon compatibility or crash containment.
+Keep the original Nameplate plugin unloaded. Disable BattleSight automatic checking (`/bs autocheck off`) when using NameplateLab automatic checking, so only one feature owns silent check requests. Disable BattleSight's cursor forcing before testing this cursor feature to avoid duplicate arrows; NameplateLab does not change other addons. The supported shared submission-entry detour is left unchanged; unknown changes to the guarded name/damage routines refuse compatibility checks. This is not universal addon compatibility or crash containment.
 
 The earlier resident-engine builds had live acceptance for names, HP coloring, sizing and normal-addon coexistence. That does not establish live verification of this single-DLL version. Offline checks cover actual DLL removal and replacement with saved settings, hook restoration, failed-teardown retention, native machine-state preservation, geometry, cursor behavior and settings. The 0.6.2 live unload/replace/reload cycle passed and the 0.6.3 baseline was accepted. The user accepted 0.7.1 level display and silent automatic/visible manual checks with SimpleLog. Device-reset behavior, long-session stability and isolated performance remain unverified.
 
@@ -90,3 +93,17 @@ Levels are learned only from check replies received while loaded and are shown o
 The implementation uses the existing font collection, geometry and draw pass. Packet callbacks maintain a fixed, identity-keyed table; drawing performs a direct atomic lookup with no lock, allocation or actor scan. Request tracking distinguishes automatic replies from manual replies, including a manual check overtaking a queued automatic request. The protocol has no request token, so attribution uses per-target request order. The user verified automatic silence and manual output on the supported server with SimpleLog.
 
 The plugin handles check packets before default-priority addons so chat replacements such as SimpleLog receive automatic replies already blocked. Manual check replies remain available for their usual formatting.
+
+### Standalone monster traits
+
+NameplateLab embeds its own compact trait database and icon atlas in the DLL. No MobDB, XIUI or BattleSight installation is required for traits, and no other addon's files or implementation are loaded. Names, levels and traits share one collection/layout/draw pass. Traits do not shift the name or level and do not participate in HP coloring. Hiding traits skips their lookup and drawing. The subdued red/blue separator is thin and shorter than the name; its dimensions follow name size, not the Trait size or Level size sliders. Scent is not displayed.
+
+Data and seven original icons come directly from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330), revision `eee7e1ad5d0a49eb667f1f88602d9fce76276330`, under its [MIT license](licenses/MobDB.txt). The notice is also embedded as the DLL's `MOBDB_LICENSE` resource. This snapshot covers 245 zones; it is upstream data, not a Phoenix-specific server export. Missing monsters remain unknown rather than being labeled passive. An index override applies only when its name matches; otherwise the zone's name default is used. Database aggression does not predict level-dependent or conditional attacks.
+
+The generated inputs are checked in, so normal builds need neither network access nor Pillow. To regenerate deliberately, clone upstream at the pinned revision and run `python tools/prepare_traits.py <checkout>` with Pillow installed. The converter reads only data/artwork, removes irrelevant fields and redundant index overrides, and never executes Lua. It produces 11,649 name entries, 498 distinct index overrides, and a 32 KiB atlas. A managed D3D8 texture is created at graphics initialization and released after safe detach; ordinary device resets retain it. If setup fails, only traits are omitted and the settings panel reports it.
+
+### Target-only details
+
+The independent **Only on current target** checkboxes under Monster levels and Monster traits restrict that detail to the selected enemy. Previously learned levels remain stored under the same rules as before; switching away hides the label, and retargeting reveals it without another reply. Zoning, despawn/death and unload still invalidate learned levels as before. Automatic/manual checking is unchanged.
+
+Both filters share one current-scene target identity, read only while a target-only detail is enabled in All/HP mode. Each visible entity is already identity-checked by name collection. Other enemies skip the restricted level/trait lookup, optional glyph collection, layout and submissions. Normal names/HP and level packet tracking continue. This removes work but is not a measured FPS improvement.

@@ -3,7 +3,11 @@
 
 namespace nameplate_lab {
 constexpr unsigned MaxGlyphs = 36;
-constexpr unsigned MaxQuads = MaxGlyphs + 6;
+constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9; // Level + seven traits + outlined strip.
+struct TraitLabel {
+    std::uint16_t bits=0;
+    float scale=1;
+};
 struct LevelLabel {
     unsigned length=0;
     char text[7]{};
@@ -48,5 +52,5 @@ bool ExpandName(const Input& input, std::uint8_t (&codes)[MaxGlyphs], unsigned& 
     unsigned& nameCount, const StatusIcons* icons = nullptr) noexcept;
 // Pure layout: no pointers, graphics calls, allocations, or changes to game state.
 bool Build(const Input& input, Output& output, const StatusIcons* icons = nullptr,
-    const LevelLabel* level = nullptr) noexcept;
+    const LevelLabel* level = nullptr, const TraitLabel* traits = nullptr) noexcept;
 }

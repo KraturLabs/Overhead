@@ -1,4 +1,6 @@
 #include "layout.h"
+#include "traits.h"
+#include <algorithm>
 #include <cmath>
 
 namespace nameplate_lab {
@@ -52,7 +54,7 @@ bool ExpandName(const Input& in, std::uint8_t (&codes)[MaxGlyphs], unsigned& cou
     return true;
 }
 
-bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLabel* level) noexcept {
+bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLabel* level, const TraitLabel* traits) noexcept {
     out.count = 0;
     if (in.length > MaxGlyphs || !finite(in.x) || !finite(in.y) || !finite(in.z)
         || !finite(in.scaleX) || !finite(in.scaleY) || in.scaleX <= 0 || in.scaleY <= 0
@@ -62,12 +64,14 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     if (!ExpandName(in, codes, count, nameCount, icons)) return false;
     struct Size { int width, height; } sizes[MaxGlyphs]{};
     int total = 0, iconWidth = 0;
+    const Glyph* textReference=nullptr;
     for (unsigned i = 0; i < count; ++i) {
         const auto code = codes[i];
         if (code == 10) continue;
         if (code < 32) return false;
         const auto& g = in.glyphs[code];
         if (!validGlyph(g)) return false;
+        if(i<nameCount&&!textReference&&code>32&&code<142)textReference=&g;
         auto& size = sizes[i];
         size = {g.width, g.height};
         if (i >= nameCount) { iconWidth += size.width; continue; }
@@ -89,6 +93,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     // between icons and the name. Additional icons grow only toward the left.
     const float gap = iconCount ? static_cast<float>(in.glyphs[32].width) : 0;
     const float iconStart = start - iconWidth - gap * iconCount;
+    float detailLeft=iconStart;
     for (unsigned i = 0; i < count; ++i) {
         const auto code = codes[i];
         if (code == 10) { pen = start; line += 8; continue; }
@@ -108,6 +113,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         }
         const double leftExact = static_cast<double>(g.offsetX + dx) + pen;
         const float left = rounded(leftExact);
+        detailLeft=std::min(detailLeft,left);
         const float right = rounded(leftExact + size.width * scale);
         const float top = rounded(static_cast<double>(g.offsetY + dy) + line);
         const float bottom = rounded(static_cast<double>(rounded(size.height * scale)) + top);
@@ -139,11 +145,13 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             width+=g.width;
         }
         float labelPen=iconStart-width*level->scale-in.glyphs[32].width;
+        detailLeft=std::min(detailLeft,labelPen);
         const auto& reference=in.glyphs[static_cast<unsigned char>(level->text[0])];
         const float baseline=static_cast<float>(reference.offsetY+reference.height);
         for(unsigned i=0;i<level->length;++i){
             const auto code=static_cast<unsigned char>(level->text[i]);
             const auto& g=in.glyphs[code];
+            detailLeft=std::min(detailLeft,labelPen+level->scale*g.offsetX);
             auto& q=out.quads[out.count++];
             q.code=0x100u|code; // Decoration: excluded from name HP bounds/coloring.
             q.textureGroup=g.textureGroup;q.alphaReference=0;
@@ -154,6 +162,36 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                     (in.nameColor&0xFF000000u)|level->color,g.uv[v*2],g.uv[v*2+1]};
             }
             labelPen+=g.width*level->scale;
+        }
+    }
+    if(traits&&traits->bits&&textReference&&validGlyph(in.glyphs[32])){
+        const float size=textReference->height*traits->scale;
+        const float top=textReference->offsetY+(textReference->height-size)*.5f;
+        float right=detailLeft-in.glyphs[32].width;
+        const auto alpha=in.nameColor&0xFF000000u;
+        const auto quad=[&](float left,float y,float width,float height,unsigned cell,std::uint32_t color){
+            auto& q=out.quads[out.count++];
+            q.code=0x200u+cell;q.textureGroup=2;q.alphaReference=0;
+            for(unsigned v=0;v<4;++v){
+                q.vertices[v]={in.x+in.scaleX*(left+(v&1?width:0)),
+                    in.y+in.scaleY*(y+(v&2?height:0)),in.z,1,color,
+                    cell==7?240.f/256:(cell*32+(v&1?31.5f:.5f))/256,
+                    cell==7?.5f:(v&2?31.5f:.5f)/32};
+            }
+        };
+        if(traits->bits&AggroKnown){
+            // Quiet separator: one local pixel wide, three quarters of the
+            // name height. Its size/position does not follow either detail slider.
+            const float height=textReference->height*.75f;
+            const float y=textReference->offsetY+(textReference->height-height)*.5f;
+            quad(right-2,y-.5f,2,height+1,7,alpha);
+            quad(right-1.5f,y,1,height,7,alpha|((traits->bits&Aggressive)?0xD87878u:0x789FC4u));
+            right-=4;
+        }
+        for(int flag=6;flag>=0;--flag){
+            if(!(traits->bits&(1u<<flag)))continue;
+            quad(right-size,top,size,size,static_cast<unsigned>(flag),alpha|0xFFFFFFu);
+            right-=size+2*traits->scale;
         }
     }
     return true;

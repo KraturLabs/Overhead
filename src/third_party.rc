@@ -1,0 +1,2 @@
+// Keep the required upstream notice inside standalone DLL distributions too.
+MOBDB_LICENSE RCDATA "../licenses/MobDB.txt"

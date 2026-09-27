@@ -1,5 +1,6 @@
 // Independent prototype. Layout/drawing is ours; assets and scene placement are
-// supplied by the original game. No addon/plugin implementation is incorporated.
+// supplied by the original game. MobDB trait data/artwork is embedded separately;
+// no addon/plugin implementation is incorporated.
 #include <Ashita.h>
 #include <atomic>
 #include <cstdio>
@@ -16,6 +17,8 @@
 #include "layout.h"
 #include "health.h"
 #include "levels.h"
+#include "traits.h"
+#include "trait_texture.h"
 #include "options.h"
 #include "client_profile.h"
 #include "native_contract.h"
@@ -78,11 +81,20 @@ std::atomic<bool> correctAspect{true};
 std::atomic<unsigned> nameFilter{2};
 std::atomic<bool> showNameStatusIcons{true};
 std::atomic<bool> showLevels{true},autoCheck{true};
+std::atomic<bool> levelsTargetOnly{false},traitsTargetOnly{false};
+struct DetailTarget { unsigned index=0;std::uint32_t id=0; } detailTarget;
 Levels levels;
 std::atomic<float> levelScale{1};
+std::atomic<bool> showTraits{true};
+std::atomic<float> traitScale{1};
+std::atomic<unsigned> traitZone{0}; // Initial SDK zone, then zone-transition packets.
+TraitTexture traitTexture;
+HRESULT traitTextureResult=S_OK;
 void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;
     showLevels=options.showLevels;autoCheck=options.autoCheck;levelScale=options.levelScale;
+    showTraits=options.showTraits;traitScale=options.traitScale;
+    levelsTargetOnly=options.levelsTargetOnly;traitsTargetOnly=options.traitsTargetOnly;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
     damageCorrectAspect.store(options.damageCorrectAspect);
     damageScale.store(options.damageScale);damageWidth.store(options.damageWidth);
@@ -141,6 +153,17 @@ bool CheckTarget(Ashita::FFXI::targetentry_t& target) noexcept {
         &&Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),flags)
         &&(flags&EnemyFlag)&&!(flags&FriendlyFlags)
         &&Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp>0&&hp<=100;
+}
+void RefreshDetailTarget() noexcept {
+    // One current-scene identity for both filters. Collection already validates
+    // each visible entity, so do not repeat entity/HP reads or cache pointers.
+    detailTarget={};
+    if(requested.load()<2||!((showLevels.load()&&levelsTargetOnly.load())
+        ||(showTraits.load()&&traitsTargetOnly.load()&&traitTexture.value)))return;
+    std::uint32_t controller=0;
+    Ashita::FFXI::targetentry_t target;
+    if(Read(clientBase+0x57876C,controller)&&controller&&Read(controller,target)&&target.IsActive)
+        detailTarget={target.Index,target.ServerId};
 }
 bool Problem(const char* value) { strcpy_s(lastProblem,value); return false; }
 
@@ -312,9 +335,10 @@ unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
 }
 
 struct Resources {
-    void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[2];
+    void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[3];
     unsigned healthPercent = 100;
     LevelLabel level;
+    TraitLabel traits;
 };
 bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons* icons=nullptr,bool showIcons=true) noexcept {
     if(icons)*icons={};
@@ -347,10 +371,24 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     // Unusual multiline labels retain native icon placement and colors.
     bool singleLine=true;
     for(unsigned i=0;i<length;++i)if(input.text[i]==10){resources.healthPercent=100;singleLine=false;}
-    if(showLevels.load(std::memory_order_relaxed)&&singleLine&&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags))
+    const bool selected=detailTarget.id==identity&&detailTarget.index==entityIndex;
+    if(showLevels.load(std::memory_order_relaxed)&&(!levelsTargetOnly.load(std::memory_order_relaxed)||selected)
+        &&singleLine&&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags))
     {
         resources.level=levels.Label(entityIndex,identity);
         resources.level.scale=levelScale.load(std::memory_order_relaxed);
+    }
+    if(showTraits.load(std::memory_order_relaxed)&&(!traitsTargetOnly.load(std::memory_order_relaxed)||selected)
+        &&traitTexture.value&&singleLine
+        &&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags)){
+        // Use the already validated visible entity; never scan actors or retain
+        // its native pointer. Only the first 24 bytes are the entity name.
+        char name[25]{};
+        if(ReadBytes(entity+offsetof(Ashita::FFXI::entity_t,Name),name,24)){
+            resources.traits.bits=LookupTraits(traitZone.load(std::memory_order_relaxed),entityIndex,name);
+            resources.traits.scale=traitScale.load(std::memory_order_relaxed);
+            resources.textures[2]=traitTexture.value;
+        }
     }
     if(icons&&(spawnFlags&1)&&singleLine){
         icons->replace=true;
@@ -414,6 +452,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             ready=loadGlyph(static_cast<std::uint8_t>(resources.level.text[i]));
         if(!ready)resources.level={}; // Missing optional glyphs do not suppress the name.
     }
+    if(resources.traits.bits&&!loadGlyph(32))resources.traits={};
     std::uint32_t graphics=0,device=0;
     if(!Read(clientBase+0x45666C,graphics)||!graphics||!Read(graphics+0xC,device)||!device)return false;
     resources.graphics=reinterpret_cast<void*>(graphics);resources.device=reinterpret_cast<IDirect3DDevice8*>(device);
@@ -525,7 +564,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
         nameplate_lab::Input input{};nameplate_lab::Output output;Resources resources{};StatusIcons icons;
         const auto visuals=Visuals();
         intentionallyFiltered=false;
-        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&nameplate_lab::Build(input,output,&icons,&resources.level)){
+        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits)){
             // Once drawing starts, do not redraw the original on top of a partial
             // replacement. A device error turns the feature off for future names.
             result=1;
@@ -595,7 +634,11 @@ public:
     bool HandleIncomingPacket(std::uint16_t id,std::uint32_t size,const std::uint8_t*,std::uint8_t* data,
         std::uint32_t,const std::uint8_t*,bool injected,bool blocked)override {
         if(injected||!data)return false;
-        if((id==0x00A||id==0x00B)&&!blocked){levels.Clear();return false;}
+        if((id==0x00A||id==0x00B)&&!blocked){
+            levels.Clear();
+            traitZone.store(id==0x00A&&size>=0x32?PacketValue<std::uint16_t>(data,0x30):0);
+            return false;
+        }
         if(id==0x00E&&!blocked&&size>=0x0B){
             if((data[0x0A]&0x20)||(size>=0x20&&(data[0x0A]&4)&&data[0x1E]==0))
                 levels.Forget(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4));
@@ -630,16 +673,17 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.720;}
+    double GetVersion()const override{return 0.810;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
     std::int32_t GetPriority()const override{return -1;}
     std::uint32_t GetFlags()const override{return static_cast<std::uint32_t>(Ashita::PluginFlags::UseCommands|Ashita::PluginFlags::UseDirect3D|Ashita::PluginFlags::UsePackets);}
     bool Direct3DInitialize(IDirect3DDevice8* device)override{
-        // Ashita's default implementation returns false. We allocate no device
-        // resources; the original game's current resources are read at draw time.
         if(!device)return false;
+        traitTextureResult=traitTexture.Initialize(device);
+        if(FAILED(traitTextureResult)&&core_)
+            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Trait artwork unavailable (%08X); names and levels remain available.",static_cast<unsigned>(traitTextureResult));
         return true;
     }
     bool Initialize(IAshitaCore* core,ILogManager*,std::uint32_t)override{
@@ -648,6 +692,9 @@ public:
         if(!instances.compare_exchange_strong(zero,1))return false;
         owns_=true;core_=core;
         levels.Clear();
+        const auto memory=core_->GetMemoryManager();
+        const auto party=memory?memory->GetParty():nullptr;
+        traitZone.store(party?party->GetMemberZone(0):0);
         ConfigureNative(reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"FFXiMain.dll")));
         if(!Compatible()){core_->GetChatManager()->Writef(207,false,"[NameplateLab] Refused: %s.",lastProblem);return false;}
         const char* root=core_->GetInstallPath();
@@ -661,7 +708,7 @@ public:
         damageAdjusted.store(0);damageRejected.store(0);
         mode.store(0);requested.store(options_.mode);
         replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);filteredNames.store(0);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.7.2] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
+        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.8.1] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
         return true;
     }
     void Release()override{
@@ -686,6 +733,7 @@ public:
                 reinterpret_cast<LPCWSTR>(&NameplateGate),&retainedModule);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Unload could not detach safely (%s). Drawing disabled; DLL retained. Restart before replacing it.",lastProblem);
         }
+        if(detached)traitTexture.Release();
         core_=nullptr;owns_=false;instances.store(0);
     }
     bool HandleCommand(std::int32_t,const char* command,bool injected)override{
@@ -697,6 +745,12 @@ public:
         else if(_stricmp(option,"all")==0){SelectMode(2);}
         else if(_stricmp(option,"hp")==0){SelectMode(3);}
         else if(_stricmp(option,"original")==0||_stricmp(option,"off")==0){SelectMode(0);}
+        else if(_strnicmp(option,"traits ",7)==0){
+            const auto setting=option+7;
+            if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){
+                options_.showTraits=_stricmp(setting,"on")==0;ChangedVisuals();
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] traits on | off");
+        }
         else if(_strnicmp(option,"levels ",7)==0||_strnicmp(option,"autocheck ",10)==0){
             const bool display=_strnicmp(option,"levels ",7)==0;
             const char* setting=option+(display?7:10);
@@ -756,7 +810,7 @@ public:
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | levels on|off | autocheck on|off | damage <setting> | reset | status");
+        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | levels on|off | autocheck on|off | traits on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -826,6 +880,8 @@ public:
             if(gui->BeginTabItem("Details")){
             gui->SeparatorText("Monster levels");
             changed=gui->Checkbox("Show checked levels",&options_.showLevels)||changed;
+            changed=gui->Checkbox("Only on current target##levels",&options_.levelsTargetOnly)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Hides other level labels without clearing learned levels. Checking continues normally.");
             changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Silent checks while levels are shown. Manual /check still prints normally. Unknown levels stay hidden.");
             float levelSize=options_.levelScale*100;
@@ -834,6 +890,18 @@ public:
             }
             if(gui->IsItemHovered())gui->SetTooltip("Scales only the level label relative to the name. Changes appear immediately.");
             if(gui->Button("Reset level size")){options_.levelScale=1;changed=true;}
+            gui->SeparatorText("Monster traits");
+            changed=gui->Checkbox("Show detection / linking / aggression",&options_.showTraits)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("MobDB defaults, not current hostility. Red: aggressive. Blue: passive. Unknown traits stay hidden; server behavior may differ.");
+            changed=gui->Checkbox("Only on current target##traits",&options_.traitsTargetOnly)||changed;
+            float traitSize=options_.traitScale*100;
+            if(gui->SliderFloat("Trait size",&traitSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){
+                options_.traitScale=traitSize/100;changed=true;
+            }
+            if(gui->Button("Reset trait size")){options_.traitScale=1;changed=true;}
+            gui->TextUnformatted("True sight / sight / sound / magic / job ability / blood / link");
+            gui->TextUnformatted("Red: aggressive   Blue: passive   Missing data: hidden");
+            if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
             gui->EndTabItem();
             }
             gui->EndTabBar();
@@ -850,6 +918,7 @@ public:
         // Initialize may run on the loading thread. Capture the actual drawing
         // thread before installing hooks, not the device initialization caller.
         if(!renderThread_)renderThread_=GetCurrentThreadId();
+        RefreshDetailTarget();
         cursorClearance[0]={};cursorClearance[1]={};
         if(cursorHooked){
             unsigned char bytes[5];
