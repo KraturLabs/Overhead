@@ -1,5 +1,6 @@
 #include "debuffs.h"
 #include "debuff_rules.h"
+#include "packet_bits.h"
 
 namespace nameplate_lab {
 namespace {
@@ -12,20 +13,6 @@ unsigned family(unsigned effect) noexcept {
     if(effect>=448&&effect<=452)return 448;
     return effect;
 }
-// XiPackets 0x028: little-endian, unaligned bit fields, starting at byte 5.
-struct Bits {
-    const std::uint8_t* data;unsigned size,pos=40;bool valid=true;
-    unsigned Take(unsigned count) noexcept {
-        if(pos+count>size*8){valid=false;return 0;}
-        unsigned value=0,shift=0;
-        while(count){
-            const unsigned part=(count<8-(pos&7))?count:8-(pos&7);
-            value|=((data[pos/8]>>(pos&7))&((1u<<part)-1))<<shift;
-            pos+=part;shift+=part;count-=part;
-        }
-        return value;
-    }
-};
 unsigned procDuration(unsigned effect) noexcept {
     switch(effect){
     case 2:case 19:case 193:return 25;
@@ -108,7 +95,7 @@ void DecodeDebuffs(unsigned packet,const std::uint8_t* data,unsigned size,void* 
         return;
     }
     if(packet!=0x028||size<19)return;
-    Bits bits{data,size};
+    PacketBits bits{data,size};
     const auto actor=bits.Take(32),targets=bits.Take(6);
     bits.Take(4);const auto category=bits.Take(4),argument=bits.Take(32);bits.Take(32);
     if(category!=1&&category!=2&&category!=3&&category!=4&&category!=6&&category!=11

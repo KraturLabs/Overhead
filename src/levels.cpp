@@ -4,12 +4,13 @@
 namespace nameplate_lab {
 void Levels::Clear() {
     const std::lock_guard lock(mutex_);
-    for(unsigned i=0;i<Slots;++i){values_[i].store(0,std::memory_order_relaxed);requests_[i]={};}
+    for(unsigned i=0;i<Slots;++i){values_[i].store(0,std::memory_order_relaxed);scanned_[i].store(0,std::memory_order_relaxed);requests_[i]={};}
     nextCheck_=0;
 }
 void Levels::Forget(unsigned index,std::uint32_t id) {
     if(index>=Slots)return;
     const std::lock_guard lock(mutex_);
+    scanned_[index].store(0,std::memory_order_relaxed); // The index may be reused.
     if(static_cast<std::uint32_t>(values_[index].load(std::memory_order_relaxed))==id)
         values_[index].store(0,std::memory_order_relaxed);
     // Preserve attribution for an in-flight reply even after the mob disappears:
@@ -20,13 +21,13 @@ LevelLabel Levels::Label(unsigned index,std::uint32_t id) const noexcept {
     LevelLabel label;
     if(index>=Slots||!id)return label;
     const auto value=values_[index].load(std::memory_order_relaxed);
-    if(static_cast<std::uint32_t>(value)!=id)return label;
-    const auto level=static_cast<unsigned>((value>>32)&0xFFFF);
-    if(!level)return label;
+    auto level=static_cast<std::uint32_t>(value)==id?static_cast<unsigned>((value>>32)&0xFFFF):0u;
     // Too weak, easy prey, decent, even, tough, very tough, incredibly tough.
     constexpr std::uint32_t colors[]={0xA0A0A0,0x40E040,0x40D0E0,0x6080FF,0xFFFF40,0xFFA040,0xFF4040,0xFF4040};
-    const auto difficulty=static_cast<unsigned>(value>>48);
-    label.color=level==256?0xFF40FF:colors[difficulty-64];
+    if(level)label.color=level==256?0xFF40FF:colors[static_cast<unsigned>(value>>48)-64];
+    // A widescan level without a check reply has no difficulty: neutral white.
+    else if((level=scanned_[index].load(std::memory_order_relaxed))!=0)label.color=0xFFFFFF;
+    else return label;
     if(level==256){label.length=6;std::memcpy(label.text,"Lv.???",6);}
     else {
         std::memcpy(label.text,"Lv.",3);label.length=3;
@@ -62,6 +63,9 @@ bool Levels::Outgoing(unsigned index,std::uint32_t id,bool injected,bool blocked
         }
     }else if(!blocked){if(!request.automatic&&!request.manual)request.discarded=false;++request.manual;}
     return false;
+}
+void Levels::Scanned(unsigned index,int level) noexcept {
+    if(index<Slots&&level>0&&level<=255)scanned_[index].store(static_cast<std::uint8_t>(level),std::memory_order_relaxed);
 }
 bool Levels::Result(unsigned index,std::uint32_t id,unsigned level,unsigned difficulty,unsigned message) {
     const bool impossible=message==249;

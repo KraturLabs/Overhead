@@ -38,15 +38,18 @@ unsigned HealthQuads(const Quad& original, const HealthFill& fill, Quad (&pieces
     pieces[0] = original;
     if (!fill.enabled || !letter(original) || !std::isfinite(fill.boundary)) return 1;
     const float left = original.vertices[0].x, right = original.vertices[1].x;
+    if (fill.tint)
+        for (auto& v : pieces[0].vertices) v.color = (v.color & 0xFF000000u) | fill.tint;
     if (right <= fill.boundary) return 1;
     if (left >= fill.boundary) { dim(pieces[0]); return 1; }
     // The boundary is strictly inside this glyph. Preserve each edge's texture
     // coordinates rather than stretching either half of its letter artwork.
-    pieces[1] = original;
+    pieces[1] = pieces[0];
     const double fraction = (static_cast<double>(fill.boundary) - left) / (static_cast<double>(right) - left);
     for (unsigned row : {0u, 2u}) {
-        const auto& a = original.vertices[row];
-        const auto& b = original.vertices[row + 1];
+        // Edges come from the tinted copy so a split letter keeps one color.
+        const auto a = pieces[0].vertices[row];
+        const auto b = pieces[0].vertices[row + 1];
         auto edge = a;
         edge.x = fill.boundary;
         edge.u = static_cast<float>(a.u + (static_cast<double>(b.u) - a.u) * fraction);

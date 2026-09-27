@@ -1,6 +1,6 @@
 # NameplateLab
 
-An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.7**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
+An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.13**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
 
 ## Features
 
@@ -13,6 +13,8 @@ An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. C
 - Monster levels beside the name, colored by the observed check difficulty. Unknown levels stay hidden; confirmed impossible-to-gauge monsters show magenta `Lv.???`. Automatic checks are silent; manual `/check` output remains visible. Display and automatic checking have separate saved toggles, both on by default.
 - Monster detection/linking icons and an aggression strip to the left of the level/name. True sight, sight, sound, magic, job ability, blood and link; true sight replaces ordinary sight. Red means aggressive, blue means passive, and unknown data stays hidden. These are database defaults, not current hostility; private-server behavior may differ.
 - Saved settings; update in game with unload, replace the DLL, then load.
+- Monster HP% after the name, colored by FFXI's HP warning bands, then distance in yalms. Both default to the current target only.
+- Action names under the name while enemies ready abilities or cast, and for your own, party and alliance casts, weapon skills and job abilities. The result stays six seconds: green for success, red for interrupted, missed or resisted.
 - Observed enemy debuffs in a centered icon row above the name, with independent display, target-only and size controls. Uses the client's status artwork through Ashita resources; no addon dependency.
 
 Damage adjustments start off; the hook is installed on first use. Setup failures report their cause; `/nplab damage retry` retries after resolving a conflict. With Keep native overhead cursor enabled, the cursor uses the drawn debuff row's bounds to rise above it and return when it disappears. The 0.9.5 debuff display, corrected icon colors, cursor clearance and steady debuff opacity have been accepted in game. The 0.6.3 names, damage and cursor baseline was accepted in game. The 0.7.1 level feature is accepted in game: levels display, automatic checks stay silent with SimpleLog, and manual checks remain visible.
@@ -47,7 +49,7 @@ If upgrading from the old resident-loader version, exit the game once before rep
 /nplab status
 ```
 
-The settings window has General and Details tabs. General contains names, cursor and damage controls. Details contains the level display/automatic-check toggles and a live Level size slider (25-300%, relative to name size), with a reset to 100%. Level size is saved independently. The Details tab and live size control were accepted in game in 0.7.2. Details also contains a saved monster-traits toggle (on by default), an independent live Trait size slider (25-300%), and Reset trait size. The 0.8.0 traits were accepted in game. Each Details section now has its own saved **Only on current target** option; these default off to preserve existing settings. The target filters and subtle separator were accepted in game in 0.8.1. Settings save under the Ashita installation's `config/nameplatelab/settings.ini`.
+The settings window has General and Details tabs. General contains names, cursor, target-window and damage controls. Details starts with **Preview on target and yourself**, then the **Plates** table (which details show for each category of name; see below), automatic checking, and size sliders for levels, traits, HP%/MP/TP/distance labels, actions and debuff icons. Settings save under the Ashita installation's `config/nameplatelab/settings.ini`; settings from earlier versions migrate automatically.
 
 ```text
 /nplab fit
@@ -57,12 +59,22 @@ The settings window has General and Details tabs. General contains names, cursor
 /nplab icons hide
 /nplab cursor on
 /nplab cursor off
+/nplab hidetarget on
+/nplab hidetarget off
 /nplab levels on
 /nplab levels off
 /nplab autocheck on
 /nplab autocheck off
 /nplab traits on
 /nplab traits off
+/nplab health on
+/nplab health off
+/nplab mp on
+/nplab tp on
+/nplab distance on
+/nplab distance off
+/nplab actions on
+/nplab actions off
 /nplab debuffs on
 /nplab debuffs off
 /nplab damage fit
@@ -84,6 +96,10 @@ The earlier resident-engine builds had live acceptance for names, HP coloring, s
 Implementation is independent; no other addon/plugin implementation is incorporated. No game assets, client binaries, local diagnostics, personal settings or generated builds are included.
 
 The status icons and future above-name content share the existing name collection and layout. There is no extra actor scan or per-feature glyph collection. Stable client contracts are validated during setup; normal rendering retains narrow hook-ownership and live-data checks. Recognized temporary device loss retains the existing recovery behavior. No background worker or engine-update system is used.
+
+### 0.9.8 draw-path cleanup
+
+Each name now sets blend and vertex format once and changes texture and alpha reference only when they differ between its quads, instead of repeating all four for every glyph. The native glyph submission only switches render target, viewport and projection, so these states hold for the whole name; sampler restoration stays per name because native drawing runs between names. Icon expansion tables validated at setup are no longer re-read for every name. Settings are still written completely and then replace the prior file, without a forced disk flush. Discovery refuses the load cleanly if its temporary image copy cannot be allocated. `/nplab status` reports the current version. This removes recurring work; no measured speedup is claimed.
 
 ### 0.6.3 baseline cleanup
 
@@ -107,20 +123,42 @@ The generated inputs are checked in, so normal builds need neither network acces
 
 ### Target-only details
 
-The independent **Only on current target** checkboxes under Monster levels and Monster traits restrict that detail to the selected enemy. Previously learned levels remain stored under the same rules as before; switching away hides the label, and retargeting reveals it without another reply. Zoning, despawn/death and unload still invalidate learned levels as before. Automatic/manual checking is unchanged.
-
-Both filters share one current-scene target identity, read only while a target-only detail is enabled in All/HP mode. Each visible entity is already identity-checked by name collection. Other enemies skip the restricted level/trait lookup, optional glyph collection, layout and submissions. Normal names/HP and level packet tracking continue. This removes work but is not a measured FPS improvement.
+"Only on current target" is expressed in the Plates table: tick a detail in the **Target** row only. Learned levels stay stored when hidden; retargeting reveals them without another reply. The current target's identity is read once per scene. Other names skip the lookups, glyph collection and layout for details their row does not show.
 
 ### Debuffs
 
-Details contains independent **Show enemy debuffs**, **Show debuffs on self**, **Show debuffs on party**, and **Show debuffs on alliance** toggles (default on). **Enemies: only on current target** defaults off. **Debuff icon size** (8-64, default 16) applies to every row. Icons follow the existing name size/width settings. Debuff opacity stays fixed instead of following nameplate fades; the artwork retains its own transparency. The row shares the name layout and draw pass and does not shift the name, levels, traits or HP fill. Rows appear only where the game draws a supported name; this does not force hidden self or party names to appear.
+The Plates table's Debuffs column controls where rows appear (Target, You, Party/Alliance and each enemy claim row; all on by default). **Debuff icon size** (8-64, default 16) applies to every row. Icons follow the existing name size/width settings. Debuff opacity stays fixed instead of following nameplate fades; the artwork retains its own transparency. The row shares the name layout and draw pass and does not shift the name, levels, traits or HP fill. Rows appear only where the game draws a supported name; this does not force hidden self or party names to appear.
 
-**Preview sample debuffs on target** temporarily substitutes poison, paralysis, blindness, silence and slow on your selected enemy. Enable Show enemy debuffs, select an enemy, then adjust Debuff icon size. Turn preview off to return to observed effects. Preview is not saved and never changes tracked effects.
+**Preview on target and yourself** temporarily substitutes poison, paralysis, blindness, silence and slow, plus a sample action cycling white/green/red, on your selected target (enemy or player) and on yourself, regardless of the table. Preview is not saved and never changes tracked effects.
 
 Self and your own party use the SDK's current status lists, filtered to supported negative effects. Removed effects disappear on the next scene update. Only active members in your current zone are eligible, and status entries must match both server ID and entity index. These lists can show effects already present when the plugin loads.
 
 The SDK exposes status lists for your own party only. For enemies and the other two alliance parties, the plugin learns successful negative effects from combat events observed while loaded, including additional effects and Dancer steps. Wear-off/removal, defeat, despawn and zoning clear observations; positive damage removes sleep and Lullaby. Refreshes update an existing effect instead of adding duplicates. Dia/Bio are inferred from successful damage results, preserving the stronger known tier. Earlier or out-of-range effects remain unknown. Supported spells use base-duration estimates for enfeebling magic, ninjutsu, songs, helix and confirmed blue-magic effects; selected job abilities and additional-effect procs also have estimates. For example, Dia I-III use 60/120/180 seconds and Poison I-III use 90/120/150 seconds. Unknown-source status events use the longest listed base spell estimate for that status, or an additional-effect estimate. These estimates do not account for caster bonuses or shortened durations. Successful spell results can supply an omitted status through their spell ID. Short additional-effect procs do not shorten a longer tracked expiry. Sleep II and Lullaby use their own icons while sharing Sleep removal. Damage-only secondary effects from weapon skills, blue magic and pets are not guessed; no-effect/resist messages do not create or refresh observations. Up to 32 effects per observed entity are retained. Step levels above five use the client's fifth-level icon.
 
-Hiding icons or selecting enemy target-only display preserves tracking. `/nplab debuffs on|off` controls enemies; friendly display has separate toggles. No combat packets are injected, changed or blocked by this feature. It supports a fixed set of 94 negative-status icons; unrecognized effects remain hidden. Server-specific result coverage, full alliance tracking and long-session behavior have not been comprehensively verified.
+Hiding icons preserves tracking. `/nplab debuffs on|off` switches the Debuffs column in every row. No combat packets are injected, changed or blocked by this feature. It supports a fixed set of 94 negative-status icons; unrecognized effects remain hidden. Server-specific result coverage, full alliance tracking and long-session behavior have not been comprehensively verified.
 
 The SDK's status resources populate one managed 512×256 atlas during graphics initialization. No game artwork is embedded or distributed. Missing artwork omits the affected icon; an unavailable atlas leaves names and other details intact. Tracking uses bounded numeric state, a lock for packet writers, and atomic reads while drawing. Friendly rows use an 18-member numeric snapshot refreshed once per scene; alliance combat resolves player IDs through the roster. There is no additional actor scan, hook, worker, per-name allocation or native pointer cache. No isolated speedup or 40+ name capacity has been measured.
+
+### HP%, distance and actions
+
+The Plates table's HP% and Distance columns control where these appear (Target only by default). HP% follows the name's advance in softened warning colors: white, then light yellow below 75%, light orange below 50%, light red below 25%; its '%' is drawn smaller. Distance follows HP% (and MP/TP) to one decimal and hides at 0.0. They read the already validated visible entity, do not shift the name, level, traits, debuffs or cursor, are excluded from HP coloring, and follow name size plus their own size slider.
+
+The Action column controls action rows (Target, You, Party/Alliance and enemy rows by default). The row is smaller than the name (Action size, default 60%) and overlaps its lower right corner. Readies and casts show from their start packet until a result arrives, at most 30 seconds. A result lingers six seconds; duplicate results do not extend it. Player job abilities, which have no ready phase, show their result immediately. Interruptions (including the interrupt marker), defeat, despawn and zoning end the row. Only explicit success/failure result messages color it; unknown results stay white. Names come from the client's resources once per packet, not while drawing. Non-ASCII names and names longer than 31 characters are omitted or shortened. Other players outside your party/alliance are not tracked.
+
+Actions reuse the existing combat callback and bounded identity-keyed tracker pattern: a lock for packet writers, atomic loads while drawing, no per-name allocation, actor scan, hook or worker. All three labels use the loaded game font in the existing draw pass; missing glyphs omit only that label. No isolated speedup is claimed and in-game appearance is not yet verified.
+
+### Plate categories, TP/MP and claims (0.9.10)
+
+The Details tab's **Plates** table has one row per category and one column per detail (Show, HP%, TP, MP, Level, Traits, Debuffs, Action, Distance); a dash means not applicable. Each name uses the first row it matches: **Target** (your selected target, any kind), **You**, **Party/Alliance** (active members in your zone, including trusts), then monsters **Claimed by you**, **Claimed by party**, **Claimed by others** and **Unclaimed**. Other players and NPCs show details only while targeted. Each row's Show switches that row. The earlier per-detail toggles and "Only on current target" options are migrated into the table once: target-only becomes Target only. Defaults keep earlier behavior (levels, traits, debuffs and actions on every monster; HP% and distance on the target) and add HP% and TP on you and your party. `/nplab <detail> on|off` switches a column in every applicable row.
+
+TP (percent of 1000 TP, as in BattleSight; soft blue) and MP (percent, soft green) follow HP% and come from the party roster, sampled once per scene. MP appears only for your own MP pool or a member whose main or support job uses MP. Claims come from the monster's claim field, whose low word holds the claimer's server ID; it is matched against you and your roster once per name, without an actor scan. **Unclaimed: only once damaged** (off by default) skips details on unhurt unclaimed monsters unless targeted. BattleSight's 20-nearest cap is not needed: details follow the names the game already draws.
+
+### Party HP depletion and softer HP colors (0.9.11)
+
+**Deplete your and party/alliance names by HP** (Details > Plates, off by default) dims the lost part of your own and party/alliance names like monster HP. Below 75% the remaining letters take the HP% band color; at 75% and above they keep the native name color. HP% bands are softened: light yellow below 75%, light orange below 50%, light red below 25%. TP now reads as a percent (TP / 10), matching BattleSight.
+
+### Widescan levels and hiding the target window (0.9.13)
+
+Widescan results supply monster levels by target index, shown in neutral white because widescan reports no difficulty; a check reply for the same monster replaces it with its difficulty color. Despawn and zoning clear widescan levels, as they do check results.
+
+**Hide the game's target window** (General > Target cursor, `/nplab hidetarget on|off`, off by default) hides the window without HideParty. Turning it on also turns on Keep native overhead cursor. Before each scene the plugin clears the window's frame and draw-callback visibility bytes, after any Present-time writer such as HideParty. Turning it off or unloading restores exactly the values found, only through the same validated window and only over its own hidden state, so a later writer's choice is never overwritten.

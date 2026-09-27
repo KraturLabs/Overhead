@@ -56,7 +56,7 @@ bool ExpandName(const Input& in, std::uint8_t (&codes)[MaxGlyphs], unsigned& cou
 }
 
 bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLabel* level, const TraitLabel* traits,
-    const DebuffRow* debuffs,DebuffBounds* bounds) noexcept {
+    const DebuffRow* debuffs,DebuffBounds* bounds,const SideLabels* labels) noexcept {
     if(bounds)*bounds={};
     out.count = 0;
     if (in.length > MaxGlyphs || !finite(in.x) || !finite(in.y) || !finite(in.z)
@@ -140,32 +140,62 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             };
         }
     }
-    if(level&&level->length&&level->length<=6&&nameCount&&validGlyph(in.glyphs[32])){
-        float width=0;
-        for(unsigned i=0;i<level->length;++i){
-            const auto& g=in.glyphs[static_cast<unsigned char>(level->text[i])];
-            if(!validGlyph(g))return true; // Optional label unavailable; keep the name.
-            width+=g.width;
+    // Native-font runs: decorations (0x100|code) stay out of HP bounds/coloring.
+    // Scale grows from the run's own baseline; shift moves it down in local units.
+    // '%' is drawn smaller than the digits it follows, on the same baseline.
+    constexpr float Symbol=.7f;
+    const auto measure=[&](const char* text,unsigned length,float& width){
+        width=0;
+        for(unsigned i=0;i<length;++i){
+            const auto& g=in.glyphs[static_cast<unsigned char>(text[i])];
+            if(!validGlyph(g))return false; // Optional label unavailable; keep the name.
+            width+=g.width*(text[i]=='%'?Symbol:1);
         }
-        float labelPen=iconStart-width*level->scale-in.glyphs[32].width;
-        detailLeft=std::min(detailLeft,labelPen);
-        const auto& reference=in.glyphs[static_cast<unsigned char>(level->text[0])];
+        return length>0;
+    };
+    const auto write=[&](const char* text,unsigned length,std::uint32_t color,float scale,float pen,float shift){
+        const auto& reference=in.glyphs[static_cast<unsigned char>(text[0])];
         const float baseline=static_cast<float>(reference.offsetY+reference.height);
-        for(unsigned i=0;i<level->length;++i){
-            const auto code=static_cast<unsigned char>(level->text[i]);
+        float leftmost=pen;
+        for(unsigned i=0;i<length;++i){
+            const auto code=static_cast<unsigned char>(text[i]);
             const auto& g=in.glyphs[code];
-            detailLeft=std::min(detailLeft,labelPen+level->scale*g.offsetX);
+            const float size=code=='%'?scale*Symbol:scale;
+            leftmost=std::min(leftmost,pen+size*g.offsetX);
             auto& q=out.quads[out.count++];
-            q.code=0x100u|code; // Decoration: excluded from name HP bounds/coloring.
+            q.code=0x100u|code;
             q.textureGroup=g.textureGroup;q.alphaReference=0;
             for(unsigned v=0;v<4;++v){
                 q.vertices[v]={
-                    in.x+in.scaleX*(labelPen+level->scale*(g.offsetX+(v&1?g.width:0))),
-                    in.y+in.scaleY*(baseline+level->scale*(g.offsetY+(v&2?g.height:0)-baseline)),in.z,1,
-                    (in.nameColor&0xFF000000u)|level->color,g.uv[v*2],g.uv[v*2+1]};
+                    in.x+in.scaleX*(pen+size*(g.offsetX+(v&1?g.width:0))),
+                    in.y+in.scaleY*(shift+baseline+size*(g.offsetY+(v&2?g.height:0)-baseline)),in.z,1,
+                    (in.nameColor&0xFF000000u)|color,g.uv[v*2],g.uv[v*2+1]};
             }
-            labelPen+=g.width*level->scale;
+            pen+=g.width*size;
         }
+        return leftmost;
+    };
+    if(level&&level->length&&level->length<=6&&nameCount&&validGlyph(in.glyphs[32])){
+        float width=0;
+        if(!measure(level->text,level->length,width))return true;
+        const float labelPen=iconStart-width*level->scale-in.glyphs[32].width;
+        detailLeft=std::min(detailLeft,labelPen);
+        detailLeft=std::min(detailLeft,write(level->text,level->length,level->color,level->scale,labelPen,0));
+    }
+    if(labels&&nameCount&&validGlyph(in.glyphs[32])){
+        // HP%, MP, TP then distance follow the name's advance on its baseline; the action
+        // overlaps its lower right corner. None shift the name, level, traits or cursor.
+        const float space=static_cast<float>(in.glyphs[32].width),end=start+total;
+        float next=end+space,width=0;
+        const TextLabel* right[]={&labels->health,&labels->mp,&labels->tp,&labels->distance};
+        for(unsigned i=0;i<4;++i){
+            const auto& label=*right[i];
+            if(label.length>(i==3?5u:4u)||!measure(label.text,label.length,width))continue;
+            write(label.text,label.length,label.color,labels->scale,next,0);next+=width*labels->scale+space;
+        }
+        if(textReference&&labels->action.length<=MaxLabel&&measure(labels->action.text,labels->action.length,width))
+            write(labels->action.text,labels->action.length,labels->action.color,labels->actionScale,
+                end-width*labels->actionScale,textReference->height*.3f);
     }
     if(traits&&traits->bits&&textReference&&validGlyph(in.glyphs[32])){
         const float size=textReference->height*traits->scale;

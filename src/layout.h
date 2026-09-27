@@ -4,7 +4,9 @@
 namespace nameplate_lab {
 constexpr unsigned MaxGlyphs = 36;
 constexpr unsigned MaxDebuffs = 32;
-constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9 + MaxDebuffs;
+constexpr unsigned MaxLabel = 31; // Action names; HP% and distance are shorter.
+// Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5) and an action name.
+constexpr unsigned MaxQuads = MaxGlyphs + 6 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + MaxLabel;
 struct DebuffRow {
     unsigned count=0;
     std::uint16_t effects[MaxDebuffs]{};
@@ -20,6 +22,16 @@ struct LevelLabel {
     char text[7]{};
     std::uint32_t color=0;
     float scale=1; // User factor relative to the existing name size.
+};
+// Native-font text beside or below the name. Missing glyphs omit only the label.
+struct TextLabel {
+    unsigned length=0;
+    char text[MaxLabel+1]{};
+    std::uint32_t color=0; // Half-intensity RGB under native doubled modulation.
+};
+struct SideLabels {
+    TextLabel health, mp, tp, distance, action;
+    float scale=1, actionScale=.6f; // User factors relative to the name size.
 };
 struct Glyph {
     std::int16_t width, height, offsetX, offsetY;
@@ -60,5 +72,6 @@ bool ExpandName(const Input& input, std::uint8_t (&codes)[MaxGlyphs], unsigned& 
 // Pure layout: no pointers, graphics calls, allocations, or changes to game state.
 bool Build(const Input& input, Output& output, const StatusIcons* icons = nullptr,
     const LevelLabel* level = nullptr, const TraitLabel* traits = nullptr,
-    const DebuffRow* debuffs = nullptr, DebuffBounds* bounds = nullptr) noexcept;
+    const DebuffRow* debuffs = nullptr, DebuffBounds* bounds = nullptr,
+    const SideLabels* labels = nullptr) noexcept;
 }

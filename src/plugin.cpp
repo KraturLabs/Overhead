@@ -17,12 +17,13 @@
 #include "layout.h"
 #include "health.h"
 #include "levels.h"
+#include "actions.h"
 #include "traits.h"
 #include "trait_texture.h"
 #include "debuff_texture.h"
 #include "options.h"
 #include "native_discovery.h"
-#include <vector>
+#include <memory>
 
 extern "C" {
 std::uintptr_t NameplateResume=0,NameplateExit=0,DamageResume=0;
@@ -49,6 +50,9 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
+constexpr char Version[]="0.9.13";
+// Native icon expansion tables; setup requires exactly these values before any hook.
+constexpr unsigned char ExpansionBase[6]={169,169,169,169,169,169},ExpansionCount[6]={0,1,2,0,1,2};
 native_discovery::Addresses native;
 std::uint32_t HookRva=0;
 std::uint32_t SubmitRva=0;
@@ -64,7 +68,10 @@ std::uint32_t CursorRva=0;
 unsigned char CursorOriginal[5]{};
 unsigned char cursorPatch[5]{};
 bool cursorHooked=false,cursorAttempted=false,cursorReady=false;
-std::atomic<bool> keepCursor{false};
+std::atomic<bool> keepCursor{false},hideTarget{false};
+// The target window's menu holds its visibility: +0x69 frame, +0x6A draw callback.
+// While hiding, (0,0) is our own state; prior is what the game or another addon left.
+struct HiddenTarget { std::uintptr_t menu=0; unsigned char prior[2]{}; } hiddenTarget;
 HMODULE retainedModule=nullptr; // Only a failed teardown retains code; normal unload frees the DLL.
 void ConfigureNative(std::uintptr_t base);
 bool DiscoverNative(std::uintptr_t base);
@@ -86,19 +93,24 @@ std::atomic<float> nameScale{1}, nameWidth{1};
 std::atomic<bool> correctAspect{true};
 std::atomic<unsigned> nameFilter{2};
 std::atomic<bool> showNameStatusIcons{true};
-std::atomic<bool> showLevels{true},autoCheck{true};
-std::atomic<bool> levelsTargetOnly{false},traitsTargetOnly{false};
+std::atomic<bool> autoCheck{true};
 struct DetailTarget { unsigned index=0;std::uint32_t id=0; } detailTarget;
 DetailTarget sceneCursorTargets[2];
 Debuffs debuffs;
 DebuffTexture debuffTexture;
 HRESULT debuffTextureResult=S_OK;
-std::atomic<bool> showDebuffs{true},debuffsTargetOnly{false};
 std::atomic<bool> previewDebuffs{false};
-std::atomic<bool> selfDebuffs{true},partyDebuffs{true},allianceDebuffs{true};
-struct FriendlyDebuffs { DetailTarget identity; DebuffRow row; };
-FriendlyDebuffs friendlyDebuffs[18]; // Current scene only; numeric identities, no native pointers.
-bool AnyDebuffs() noexcept {return showDebuffs||selfDebuffs||partyDebuffs||allianceDebuffs;}
+std::atomic<unsigned> rowFeatures[RowCount]; // Saved per-category detail columns.
+std::atomic<bool> unclaimedDamagedOnly{false},friendlyHealth{false};
+// Whether any shown row enables this detail column.
+bool AnyRows(unsigned column) noexcept {
+    for(const auto& row:rowFeatures){const auto value=row.load(std::memory_order_relaxed);if((value&RowShow)&&(value&column))return true;}
+    return false;
+}
+// Your party/alliance roster for the current scene: identities for categories
+// and claims, TP/MP and status debuffs. Numeric only; no native pointers.
+struct SceneMember { DetailTarget identity; DebuffRow row; unsigned tp=0; int mp=-1; };
+SceneMember sceneMembers[18];
 DebuffRow StatusDebuffs(const std::int16_t* statuses) noexcept {
     DebuffRow row;
     if(statuses)for(unsigned i=0;i<32;++i)
@@ -113,20 +125,20 @@ DebuffRow StatusDebuffs(const std::uint8_t* statuses,std::uint64_t mask) noexcep
 }
 std::atomic<unsigned> debuffSize{16};
 std::uint32_t sceneSeconds=0;
+Actions actions;
+std::atomic<float> labelScale{1},actionScale{.6f};
 Levels levels;
 std::atomic<float> levelScale{1};
-std::atomic<bool> showTraits{true};
 std::atomic<float> traitScale{1};
 std::atomic<unsigned> traitZone{0}; // Initial SDK zone, then zone-transition packets.
 TraitTexture traitTexture;
 HRESULT traitTextureResult=S_OK;
 void PublishVisuals(const Options& options) noexcept {
-    keepCursor=options.keepCursor;
-    showLevels=options.showLevels;autoCheck=options.autoCheck;levelScale=options.levelScale;
-    showTraits=options.showTraits;traitScale=options.traitScale;
-    showDebuffs=options.showDebuffs;debuffsTargetOnly=options.debuffsTargetOnly;debuffSize=options.debuffSize;
-    selfDebuffs=options.selfDebuffs;partyDebuffs=options.partyDebuffs;allianceDebuffs=options.allianceDebuffs;
-    levelsTargetOnly=options.levelsTargetOnly;traitsTargetOnly=options.traitsTargetOnly;
+    keepCursor=options.keepCursor;hideTarget=options.hideTarget;
+    autoCheck=options.autoCheck;levelScale=options.levelScale;traitScale=options.traitScale;debuffSize=options.debuffSize;
+    for(unsigned row=0;row<RowCount;++row)rowFeatures[row]=options.rows[row];
+    unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;
+    labelScale=options.labelScale;actionScale=options.actionScale;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
     damageCorrectAspect.store(options.damageCorrectAspect);
     damageScale.store(options.damageScale);damageWidth.store(options.damageWidth);
@@ -151,6 +163,7 @@ char lastProblem[160]="not enabled";
 static_assert(offsetof(Ashita::FFXI::entity_t, HPPercent) == 0xEC);
 static_assert(offsetof(Ashita::FFXI::entity_t, SpawnFlags) == 0x1D0);
 static_assert(offsetof(Ashita::FFXI::entity_t, ServerId) == 0x78);
+static_assert(offsetof(Ashita::FFXI::entity_t, Distance) == 0xD8); // Squared yalms.
 constexpr auto StatusFlagsOffset=offsetof(Ashita::FFXI::entity_t,Render)+offsetof(Ashita::FFXI::render_t,Flags1);
 static_assert(StatusFlagsOffset==0x124 && offsetof(Ashita::FFXI::entity_t,LinkshellColor)==0x1D4);
 static_assert(offsetof(Ashita::FFXI::render_t,Flags2)==offsetof(Ashita::FFXI::render_t,Flags1)+4);
@@ -191,10 +204,8 @@ void RefreshDetailTarget() noexcept {
     // each visible entity, so do not repeat entity/HP reads or cache pointers.
     detailTarget={};
     sceneCursorTargets[0]={};sceneCursorTargets[1]={};
-    const bool debuffCursor=AnyDebuffs()&&debuffTexture.value&&keepCursor.load();
-    if(!requested.load()||!((showLevels.load()&&levelsTargetOnly.load())
-        ||(showTraits.load()&&traitsTargetOnly.load()&&traitTexture.value)
-        ||(showDebuffs.load()&&(debuffsTargetOnly.load()||previewDebuffs.load())&&debuffTexture.value)||debuffCursor))return;
+    const bool debuffCursor=(AnyRows(ShowDebuffs)||previewDebuffs.load())&&debuffTexture.value&&keepCursor.load();
+    if(!requested.load())return;
     std::uint32_t controller=0;
     Ashita::FFXI::targetentry_t target;
     if(Read(clientBase+native.targets,controller)&&controller&&Read(controller,target)&&target.IsActive)
@@ -204,22 +215,33 @@ void RefreshDetailTarget() noexcept {
         if(Read(controller+sizeof(target),target)&&target.IsActive)sceneCursorTargets[1]={target.Index,target.ServerId};
     }
 }
-struct DebuffContext { std::uint32_t now; IParty* party; };
-void RefreshFriendlyDebuffs(IMemoryManager* memory) noexcept {
-    for(auto& entry:friendlyDebuffs)entry={};
-    if(!memory||!(selfDebuffs||partyDebuffs||allianceDebuffs))return;
-    auto* party=memory->GetParty();
+struct CombatContext { std::uint32_t now; IParty* party; IResourceManager* resources; };
+// Jobs with MP: WHM BLM RDM PLD DRK SMN BLU SCH GEO RUN.
+bool MagicJob(unsigned job) noexcept {
+    return job==3||job==4||job==5||job==7||job==8||job==15||job==16||job==20||job==21||job==22;
+}
+void RefreshScene(IMemoryManager* memory) noexcept {
+    for(auto& entry:sceneMembers)entry={};
+    auto* party=memory?memory->GetParty():nullptr;
     if(!party)return;
+    const bool statuses=AnyRows(ShowDebuffs);
     const auto zone=party->GetMemberZone(0);
     for(unsigned member=0;member<18;++member){
-        if(!(member==0?selfDebuffs.load():member<6?partyDebuffs.load():allianceDebuffs.load())
-            ||!party->GetMemberIsActive(member)||party->GetMemberZone(member)!=zone)continue;
-        auto& entry=friendlyDebuffs[member];
+        if(!party->GetMemberIsActive(member)||party->GetMemberZone(member)!=zone)continue;
+        auto& entry=sceneMembers[member];
         entry.identity={party->GetMemberTargetIndex(member),party->GetMemberServerId(member)};
+        entry.tp=party->GetMemberTP(member);
         if(member==0){
+            // Your own maximum MP is exact, including a support job too low for MP.
             auto* player=memory->GetPlayer();
-            if(player)entry.row=StatusDebuffs(player->GetBuffs());
-        }else if(member<6){
+            if(player&&player->GetMPMax())entry.mp=party->GetMemberMPPercent(0);
+            if(player&&statuses)entry.row=StatusDebuffs(player->GetBuffs());
+            continue;
+        }
+        if(MagicJob(party->GetMemberMainJob(member))||MagicJob(party->GetMemberSubJob(member)))
+            entry.mp=party->GetMemberMPPercent(member);
+        if(!statuses)continue;
+        if(member<6){
             // Status entries are keyed by identity, not party roster order.
             for(unsigned status=0;status<5;++status)
                 if(party->GetStatusIconsServerId(status)==entry.identity.id
@@ -229,29 +251,80 @@ void RefreshFriendlyDebuffs(IMemoryManager* memory) noexcept {
         }else entry.row=debuffs.Read(entry.identity.index,entry.identity.id,sceneSeconds);
     }
 }
-void ReceiveDebuff(void* context,const DebuffEvent& event) {
-    const auto& state=*static_cast<DebuffContext*>(context);
-    // Monster IDs encode the local index; keep their existing direct lookup.
-    unsigned index=event.target&0xFFF;
-    const auto matches=[&](unsigned slot,bool player){
-        std::uint32_t entity=0,id=0,flags=0;
+// Monster IDs encode the local index. Player IDs must be resolved through the
+// bounded roster from firstMember, not their low ID bits. 0x900: not current.
+unsigned ObservedIndex(std::uint32_t id,IParty* party,unsigned firstMember,bool rosterPlayers) noexcept {
+    const auto matches=[&](unsigned slot,bool roster){
+        std::uint32_t entity=0,current=0,flags=0;
         return slot<0x900&&Read(clientBase+native.entities+slot*4,entity)&&entity
-            &&Read(entity+0x78,id)&&id==event.target
+            &&Read(entity+0x78,current)&&current==id
             &&Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),flags)
-            &&(player?(flags&1)!=0:((flags&EnemyFlag)&&!(flags&FriendlyFlags)));
+            &&(roster?!rosterPlayers||(flags&1)!=0:((flags&EnemyFlag)&&!(flags&FriendlyFlags)));
     };
-    if(!matches(index,false)){
-        // Only alliance lacks an authoritative status list. Player IDs must
-        // be resolved through the bounded roster, not their low ID bits.
-        index=0x900;
-        if(state.party)for(unsigned member=6;member<18;++member)
-            if(state.party->GetMemberIsActive(member)&&state.party->GetMemberServerId(member)==event.target
-                &&state.party->GetMemberZone(member)==state.party->GetMemberZone(0)){
-                index=state.party->GetMemberTargetIndex(member);break;
-            }
-        if(!matches(index,true))return;
+    if(matches(id&0xFFF,false))return id&0xFFF;
+    if(party)for(unsigned member=firstMember;member<18;++member)
+        if(party->GetMemberIsActive(member)&&party->GetMemberServerId(member)==id
+            &&party->GetMemberZone(member)==party->GetMemberZone(0)){
+            const unsigned index=party->GetMemberTargetIndex(member);
+            return matches(index,true)?index:0x900;
+        }
+    return 0x900;
+}
+void ReceiveDebuff(void* context,const DebuffEvent& event) {
+    const auto& state=*static_cast<CombatContext*>(context);
+    // Only alliance lacks an authoritative status list.
+    const auto index=ObservedIndex(event.target,state.party,6,true);
+    if(index<0x900)debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank,event.duration,event.preserveLonger);
+}
+// Enemies, you, party and alliance (including trusts). Names resolve once, here.
+void ReceiveAction(void* context,const ActionEvent& event) {
+    const auto& state=*static_cast<CombatContext*>(context);
+    const auto index=ObservedIndex(event.actor,state.party,0,false);
+    if(index>=0x900)return;
+    if(event.change==ActionChange::Clear){actions.Forget(index,event.actor);return;}
+    if(event.change==ActionChange::Finish){actions.Finish(index,event.actor,event.result,state.now);return;}
+    const char* name=nullptr;
+    if(auto* resources=state.resources){
+        const bool instant=event.change==ActionChange::Instant;
+        if(event.category==8){if(const auto* spell=resources->GetSpellById(event.id))name=spell->Name[0];}
+        // Completed job abilities use the header ID plus the resource-table offset.
+        else if(instant||event.actor<0x1000000||event.id<256){
+            if(const auto* ability=resources->GetAbilityById(instant?event.id+512:event.id))name=ability->Name[0];
+        }else name=resources->GetString("monsters.abilities",event.id-256);
+        actions.Show(index,event.actor,name,event.result,instant,state.now);
     }
-    debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank,event.duration,event.preserveLonger);
+}
+// Detail column named by a "<name> on|off" command, or 0.
+unsigned DetailCommand(const char* option) noexcept {
+    static constexpr struct {const char* name;unsigned column;} Commands[]={{"levels",ShowLevel},{"traits",ShowTraits},
+        {"debuffs",ShowDebuffs},{"health",ShowHealth},{"mp",ShowMp},{"tp",ShowTp},{"distance",ShowDistance},{"actions",ShowAction}};
+    const char* space=std::strchr(option,' ');
+    if(!space)return 0;
+    for(const auto& command:Commands)
+        if(std::strlen(command.name)==static_cast<std::size_t>(space-option)&&_strnicmp(option,command.name,space-option)==0)return command.column;
+    return 0;
+}
+std::uintptr_t TargetMenu() noexcept {
+    std::uint32_t window=0,menu=0,back=0;
+    return Read(clientBase+native.targetWindow,window)&&window&&Read(window+8,menu)&&menu
+        &&Read(menu+0xC,back)&&back==window?menu:0;
+}
+bool WriteBytes(std::uintptr_t address,const void* input,std::size_t size) noexcept {
+    __try{std::memcpy(reinterpret_cast<void*>(address),input,size);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+// Runs before each scene, after any Present-time writer such as HideParty.
+// Restores only through the same menu and only over our own (0,0).
+void HideTargetWindow(bool hide) noexcept {
+    const auto menu=TargetMenu();
+    unsigned char flags[2];
+    if(!menu||!ReadBytes(menu+0x69,flags,2)){hiddenTarget={};return;}
+    if(!hide){
+        if(hiddenTarget.menu==menu&&!flags[0]&&!flags[1])WriteBytes(menu+0x69,hiddenTarget.prior,2);
+        hiddenTarget={};return;
+    }
+    if(menu!=hiddenTarget.menu||flags[0]||flags[1]){hiddenTarget.menu=menu;std::memcpy(hiddenTarget.prior,flags,2);}
+    if(flags[0]||flags[1]){const unsigned char hidden[2]{};WriteBytes(menu+0x69,hidden,2);}
 }
 bool Problem(const char* value) { strcpy_s(lastProblem,value); return false; }
 
@@ -296,10 +369,9 @@ bool CheckNativeRange(unsigned index) noexcept {
 bool Compatible() noexcept {
     if(!clientBase||!HookRva)return Problem("native routine discovery failed or ambiguous");
     for(unsigned i=0;i<6;++i)if(!CheckNativeRange(i))return Problem("unsupported or modified native rendering contract");
-    const unsigned char bases[6]={169,169,169,169,169,169},counts[6]={0,1,2,0,1,2};
     unsigned char bytes[6];
-    if(!ReadBytes(clientBase+native.expansionBase,bytes,6)||std::memcmp(bytes,bases,6)
-        ||!ReadBytes(clientBase+native.expansionCount,bytes,6)||std::memcmp(bytes,counts,6))
+    if(!ReadBytes(clientBase+native.expansionBase,bytes,6)||std::memcmp(bytes,ExpansionBase,6)
+        ||!ReadBytes(clientBase+native.expansionCount,bytes,6)||std::memcmp(bytes,ExpansionCount,6))
         return Problem("unsupported icon expansion tables");
     return true;
 }
@@ -396,20 +468,20 @@ unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
     Options options;options.scale=damageScale.load();options.width=damageWidth.load();
     options.correctAspect=damageCorrectAspect.load();
     if(!SizeScale(scales[0],scales[1],options)){damageRejected.fetch_add(1);return 0;}
-    // The pointer is proven to be this native call's stack, not arbitrary memory.
-    __try {
-        auto* output=reinterpret_cast<float*>(pair);
-        output[0]=scales[0];output[1]=scales[1];
-    }__except(EXCEPTION_EXECUTE_HANDLER){damageRejected.fetch_add(1);return 0;}
+    // The pointer is proven to be this native call's stack slot, read just above.
+    auto* output=reinterpret_cast<float*>(pair);
+    output[0]=scales[0];output[1]=scales[1];
     damageAdjusted.fetch_add(1);return 1;
 }
 
 struct Resources {
     void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[4];
     unsigned healthPercent = 100;
+    std::uint32_t healthTint = 0;
     LevelLabel level;
     TraitLabel traits;
     DebuffRow debuffs;
+    SideLabels labels;
     DetailTarget identity;
 };
 bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons* icons=nullptr,bool showIcons=true) noexcept {
@@ -445,30 +517,59 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     for(unsigned i=0;i<length;++i)if(input.text[i]==10){resources.healthPercent=100;singleLine=false;}
     const bool selected=detailTarget.id==identity&&detailTarget.index==entityIndex;
     resources.identity={entityIndex,identity};
-    if(showDebuffs.load(std::memory_order_relaxed)&&debuffTexture.value&&singleLine
-        &&(!debuffsTargetOnly.load(std::memory_order_relaxed)||selected)
-        &&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags)){
-        if(selected&&previewDebuffs.load(std::memory_order_relaxed))
-            resources.debuffs={5,{3,4,5,6,13}};
-        else resources.debuffs=debuffs.Read(entityIndex,identity,sceneSeconds);
+    const bool enemy=(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags);
+    unsigned member=18;
+    for(unsigned m=0;m<18;++m)
+        if(sceneMembers[m].identity.id==identity&&sceneMembers[m].identity.index==entityIndex){member=m;break;}
+    std::uint8_t hp=0;
+    const bool hpKnown=Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100;
+    // The first matching category decides this name's details. Other players and
+    // NPCs match none unless selected.
+    unsigned row=RowCount;
+    if(selected)row=RowTarget;
+    else if(member==0)row=RowSelf;
+    else if(member<18)row=RowParty;
+    else if(enemy){
+        std::uint32_t claim=0;
+        if(Read(entity+offsetof(Ashita::FFXI::entity_t,ClaimStatus),claim)){
+            // The low word holds the claimer's server ID, truncated to 16 bits.
+            const auto owner=claim&0xFFFF;
+            if(!owner)row=unclaimedDamagedOnly.load(std::memory_order_relaxed)&&(!hpKnown||hp>=100)?RowCount:RowUnclaimed;
+            else if(sceneMembers[0].identity.id&&owner==(sceneMembers[0].identity.id&0xFFFF))row=RowClaimedSelf;
+            else{
+                row=RowClaimedOther;
+                for(unsigned m=1;m<18;++m)
+                    if(sceneMembers[m].identity.id&&owner==(sceneMembers[m].identity.id&0xFFFF)){row=RowClaimedParty;break;}
+            }
+        }
     }
-    if(debuffTexture.value&&singleLine&&(spawnFlags&1))
-        for(const auto& entry:friendlyDebuffs)
-            if(entry.identity.id==identity&&entry.identity.index==entityIndex){resources.debuffs=entry.row;break;}
+    unsigned features=0;
+    if(singleLine&&row<RowCount){
+        features=rowFeatures[row].load(std::memory_order_relaxed);
+        if(!(features&RowShow))features=0;
+    }
+    // Preview substitutes sample debuffs and an action on the selected target
+    // (enemy or player) and on you, regardless of the table. Not saved.
+    bool preview=false;
+    if(previewDebuffs.load(std::memory_order_relaxed)&&singleLine){
+        std::uint16_t playerIndex=0;
+        preview=selected||(Read(clientBase+native.playerIndex,playerIndex)&&playerIndex==entityIndex);
+    }
+    if(preview){if(debuffTexture.value)resources.debuffs={5,{3,4,5,6,13}};}
+    else if((features&ShowDebuffs)&&debuffTexture.value){
+        if(enemy)resources.debuffs=debuffs.Read(entityIndex,identity,sceneSeconds);
+        else if(member<18)resources.debuffs=sceneMembers[member].row;
+    }
     if(resources.debuffs.count){
         debuffTexture.Filter(resources.debuffs);
         resources.debuffs.size=static_cast<float>(debuffSize.load(std::memory_order_relaxed));
         resources.textures[3]=debuffTexture.value;
     }
-    if(showLevels.load(std::memory_order_relaxed)&&(!levelsTargetOnly.load(std::memory_order_relaxed)||selected)
-        &&singleLine&&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags))
-    {
+    if((features&ShowLevel)&&enemy){
         resources.level=levels.Label(entityIndex,identity);
         resources.level.scale=levelScale.load(std::memory_order_relaxed);
     }
-    if(showTraits.load(std::memory_order_relaxed)&&(!traitsTargetOnly.load(std::memory_order_relaxed)||selected)
-        &&traitTexture.value&&singleLine
-        &&(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags)){
+    if((features&ShowTraits)&&enemy&&traitTexture.value){
         // Use the already validated visible entity; never scan actors or retain
         // its native pointer. Only the first 24 bytes are the entity name.
         char name[25]{};
@@ -478,6 +579,43 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             resources.textures[2]=traitTexture.value;
         }
     }
+    const auto number=[](TextLabel& label,unsigned value,std::uint32_t color,bool percent){
+        label.color=color;
+        if(value>=1000)label.text[label.length++]=static_cast<char>('0'+value/1000%10);
+        if(value>=100)label.text[label.length++]=static_cast<char>('0'+value/100%10);
+        if(value>=10)label.text[label.length++]=static_cast<char>('0'+value/10%10);
+        label.text[label.length++]=static_cast<char>('0'+value%10);
+        if(percent)label.text[label.length++]='%';
+    };
+    // Your own and party/alliance names deplete like monsters; the remaining
+    // letters take the HP% band color, keeping the native color at 75% and above.
+    if(member<18&&singleLine&&hpKnown&&friendlyHealth.load(std::memory_order_relaxed)){
+        resources.healthPercent=hp;resources.healthTint=hp<75?HealthColor(hp):0;
+    }
+    if((features&ShowHealth)&&hpKnown)
+        number(resources.labels.health,hp,HealthColor(hp),true);
+    // Soft green MP and soft blue TP, half intensity under native doubled modulation.
+    if(member<18&&(features&ShowMp)&&sceneMembers[member].mp>=0&&sceneMembers[member].mp<=100)
+        number(resources.labels.mp,static_cast<unsigned>(sceneMembers[member].mp),0x4E734Eu,true);
+    if(member<18&&(features&ShowTp)&&sceneMembers[member].tp<=3000)
+        number(resources.labels.tp,sceneMembers[member].tp/10,0x466478u,true);
+    if(features&ShowDistance){
+        float squared=0;
+        if(Read(entity+offsetof(Ashita::FFXI::entity_t,Distance),squared)&&squared>=0&&squared<1e6f){
+            const auto tenths=static_cast<unsigned>(std::sqrt(squared)*10+.5f);
+            if(tenths&&tenths<10000){ // Hidden at 0.0.
+                auto& label=resources.labels.distance;
+                number(label,tenths/10,0x808080u,false);
+                label.text[label.length++]='.';
+                label.text[label.length++]=static_cast<char>('0'+tenths%10);
+            }
+        }
+    }
+    if(features&ShowAction)resources.labels.action=actions.Read(entityIndex,identity,sceneSeconds);
+    // Cycles neutral, success and failure colors each second.
+    if(preview)resources.labels.action={10,"Thunder IV",ActionColor(sceneSeconds%3)};
+    resources.labels.scale=labelScale.load(std::memory_order_relaxed);
+    resources.labels.actionScale=actionScale.load(std::memory_order_relaxed);
     if(icons&&(spawnFlags&1)&&singleLine){
         icons->replace=true;
         if(showIcons){
@@ -490,7 +628,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             if((icons->active&4)&&!Read(entity+offsetof(Ashita::FFXI::entity_t,LinkshellColor),icons->linkshellColor))return false;
         }
     }
-    if(!ReadBytes(clientBase+native.expansionBase,input.expansionBase,6)||!ReadBytes(clientBase+native.expansionCount,input.expansionCount,6))return false;
+    std::memcpy(input.expansionBase,ExpansionBase,6);std::memcpy(input.expansionCount,ExpansionCount,6);
     std::uint8_t codes[MaxGlyphs];unsigned count=0,nameCount=0;
     if(!ExpandName(input,codes,count,nameCount,icons))return false;
     std::uint32_t fontData[12]{};
@@ -541,6 +679,11 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         if(!ready)resources.level={}; // Missing optional glyphs do not suppress the name.
     }
     if(resources.traits.bits&&!loadGlyph(32))resources.traits={};
+    for(auto* label:{&resources.labels.health,&resources.labels.mp,&resources.labels.tp,&resources.labels.distance,&resources.labels.action}){
+        bool ready=!label->length||loadGlyph(32);
+        for(unsigned i=0;ready&&i<label->length;++i)ready=loadGlyph(static_cast<std::uint8_t>(label->text[i]));
+        if(!ready)*label={};
+    }
     std::uint32_t graphics=0,device=0;
     if(!Read(clientBase+native.graphics,graphics)||!graphics||!Read(graphics+0xC,device)||!device)return false;
     resources.graphics=reinterpret_cast<void*>(graphics);resources.device=reinterpret_cast<IDirect3DDevice8*>(device);
@@ -617,7 +760,21 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     };
     if(!sampler.Apply(filter))return finish(false);
     const auto submit=reinterpret_cast<Submit>(&NameplateSubmit);
-    const auto health=resources.healthPercent<100?MeasureHealth(output,resources.healthPercent):HealthFill{};
+    auto health=resources.healthPercent<100?MeasureHealth(output,resources.healthPercent):HealthFill{};
+    health.tint=resources.healthTint;
+    // The native submit changes only render target, viewport and projection, so
+    // state set here holds for this whole name. Native drawing runs between names.
+    unsigned group=~0u;DWORD alpha=~0u;
+    const auto fail=[&]{
+        progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF");
+        return finish(false);
+    };
+    if(!output.count)return finish(true);
+    // After state mutation or a submission, conservatively consume this
+    // name. Never submit native geometry over a partial replacement.
+    progress.nativeSafe=false;
+    if(!progress.Check(device->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE),"Set ALPHABLENDENABLE")
+        ||!progress.Check(device->SetVertexShader(0x144),"SetVertexShader"))return fail();
     for(unsigned i=0;i<output.count;++i){
         Quad pieces[2];
         const auto* quads=&output.quads[i];
@@ -625,21 +782,19 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         if(health.enabled){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
         for(unsigned piece=0;piece<pieceCount;++piece){
             const auto& q=quads[piece];
-            // After state mutation or a submission, conservatively consume this
-            // name. Never submit native geometry over a partial replacement.
-            progress.nativeSafe=false;
-            if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture")
-                ||!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,q.alphaReference),"Set ALPHAREF")
-                ||!progress.Check(device->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE),"Set ALPHABLENDENABLE")
-                ||!progress.Check(device->SetVertexShader(0x144),"SetVertexShader")
-                ||!progress.Check(submit(resources.graphics,D3DPT_TRIANGLESTRIP,2,q.vertices,sizeof(Vertex)),"Submit")){
-                progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF");
-                return finish(false);
+            if(q.textureGroup!=group){
+                if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture"))return fail();
+                group=q.textureGroup;
             }
+            if(q.alphaReference!=alpha){
+                if(!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,q.alphaReference),"Set ALPHAREF"))return fail();
+                alpha=q.alphaReference;
+            }
+            if(!progress.Check(submit(resources.graphics,D3DPT_TRIANGLESTRIP,2,q.vertices,sizeof(Vertex)),"Submit"))return fail();
             ++progress.submitted;
-            if(!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF"))return finish(false);
         }
     }
+    if(alpha&&!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF"))return finish(false);
     return finish(true);
 }
 }
@@ -654,7 +809,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
         const auto visuals=Visuals();
         intentionallyFiltered=false;
         if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)
-            &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds)){
+            &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds,&resources.labels)){
             // Once drawing starts, do not redraw the original on top of a partial
             // replacement. A device error turns the feature off for future names.
             result=1;
@@ -732,6 +887,7 @@ public:
         if((id==0x00A||id==0x00B)&&!blocked){
             levels.Clear();
             debuffs.Clear();
+            actions.Clear();
             traitZone.store(id==0x00A&&size>=0x32?PacketValue<std::uint16_t>(data,0x30):0);
             return false;
         }
@@ -739,15 +895,21 @@ public:
             if((data[0x0A]&0x20)||(size>=0x20&&(data[0x0A]&4)&&data[0x1E]==0)){
                 levels.Forget(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4));
                 debuffs.Forget(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4));
+                actions.Forget(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4));
             }
         }
         // Original server combat data remains meaningful if a chat formatter
         // blocks it later. Observation never changes the packet/block result.
         if(id==0x028||id==0x029){
             auto* memory=core_?core_->GetMemoryManager():nullptr;
-            DebuffContext context{static_cast<std::uint32_t>(GetTickCount64()/1000),memory?memory->GetParty():nullptr};
+            CombatContext context{static_cast<std::uint32_t>(GetTickCount64()/1000),memory?memory->GetParty():nullptr,
+                core_?core_->GetResourceManager():nullptr};
             DecodeDebuffs(id,data,size,&context,ReceiveDebuff);
+            if(AnyRows(ShowAction))DecodeActions(id,data,size,&context,ReceiveAction);
         }
+        // Widescan entries: target index +4, signed level +6. No identity; the
+        // index is cleared on despawn and zoning.
+        if(id==0x0F4&&!blocked&&size>=8)levels.Scanned(PacketValue<std::uint16_t>(data,4),static_cast<std::int8_t>(data[6]));
         if(id!=0x029||size<0x1C)return false;
         const auto message=PacketValue<std::uint16_t>(data,0x18)&0x7FFF;
         if(message!=249&&(message<170||message>178))return false;
@@ -766,7 +928,7 @@ public:
             return levels.Outgoing(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4),injected,blocked);
         // The normal position heartbeat supplies a bounded opportunity to check
         // one selected target. No render polling, extra actor scan, or worker.
-        if(id!=0x015||injected||blocked||!core_||!autoCheck.load()||!showLevels.load()||mode.load()<2||!LocalIdentity())return false;
+        if(id!=0x015||injected||blocked||!core_||!autoCheck.load()||!AnyRows(ShowLevel)||mode.load()<2||!LocalIdentity())return false;
         Ashita::FFXI::targetentry_t target;
         if(!CheckTarget(target)||!levels.Prepare(target.Index,target.ServerId,GetTickCount64()))return false;
         std::uint8_t check[0x10]{};
@@ -778,7 +940,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.907;}
+    double GetVersion()const override{return 0.913;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -798,9 +960,10 @@ public:
         if(!instances.compare_exchange_strong(zero,1))return false;
         owns_=true;core_=core;
         previewDebuffs=false;
-        for(auto& entry:friendlyDebuffs)entry={};
+        for(auto& entry:sceneMembers)entry={};
         levels.Clear();
         debuffs.Clear();
+        actions.Clear();
         const auto memory=core_->GetMemoryManager();
         const auto party=memory?memory->GetParty():nullptr;
         traitZone.store(party?party->GetMemberZone(0):0);
@@ -819,13 +982,14 @@ public:
         damageAdjusted.store(0);damageRejected.store(0);
         mode.store(0);requested.store(options_.mode);
         replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);filteredNames.store(0);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.9.7] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.");
+        core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.",Version);
         return true;
     }
     void Release()override{
         if(!owns_)return;
         Save(true);window_=false;
-        keepCursor=false;
+        HideTargetWindow(false); // Hand the target window back exactly as found.
+        keepCursor=false;hideTarget=false;
         mode.store(0,std::memory_order_release);requested.store(0);
         damageEnabled.store(false);
         bool detached=true;
@@ -846,6 +1010,7 @@ public:
         }
         if(detached){traitTexture.Release();debuffTexture.Release();}
         debuffs.Clear();
+        actions.Clear();
         core_=nullptr;owns_=false;instances.store(0);
     }
     bool HandleCommand(std::int32_t,const char* command,bool injected)override{
@@ -857,24 +1022,26 @@ public:
         else if(_stricmp(option,"all")==0){SelectMode(2);}
         else if(_stricmp(option,"hp")==0){SelectMode(3);}
         else if(_stricmp(option,"original")==0||_stricmp(option,"off")==0){SelectMode(0);}
-        else if(_strnicmp(option,"debuffs ",8)==0){
-            const auto* setting=option+8;
-            if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){
-                options_.showDebuffs=_stricmp(setting,"on")==0;ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] debuffs on | off");
+        else if(_strnicmp(option,"autocheck ",10)==0){
+            const char* setting=option+10;
+            if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){options_.autoCheck=_stricmp(setting,"on")==0;ChangedVisuals();}
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] autocheck on | off");
         }
-        else if(_strnicmp(option,"traits ",7)==0){
-            const auto setting=option+7;
+        else if(const auto column=DetailCommand(option)){
+            // Switches one detail column in every row it applies to; the table is finer.
+            const char* setting=std::strchr(option,' ')+1;
             if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){
-                options_.showTraits=_stricmp(setting,"on")==0;ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] traits on | off");
+                for(unsigned row=0;row<RowCount;++row)
+                    options_.rows[row]=_stricmp(setting,"on")==0?options_.rows[row]|(column&RowColumns[row]):options_.rows[row]&~column;
+                ChangedVisuals();
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] levels | traits | debuffs | health | mp | tp | distance | actions on | off");
         }
-        else if(_strnicmp(option,"levels ",7)==0||_strnicmp(option,"autocheck ",10)==0){
-            const bool display=_strnicmp(option,"levels ",7)==0;
-            const char* setting=option+(display?7:10);
-            if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){
-                (display?options_.showLevels:options_.autoCheck)=_stricmp(setting,"on")==0;ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] levels on | off; autocheck on | off");
+        else if(_strnicmp(option,"hidetarget ",11)==0){
+            if(_stricmp(option+11,"on")==0||_stricmp(option+11,"off")==0){
+                options_.hideTarget=_stricmp(option+11,"on")==0;
+                if(options_.hideTarget&&!options_.keepCursor){options_.keepCursor=true;cursorAttempted=false;}
+                ChangedVisuals();
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] hidetarget on | off");
         }
         else if(_strnicmp(option,"cursor ",7)==0){
             if(_stricmp(option+7,"on")==0||_stricmp(option+7,"off")==0){
@@ -921,14 +1088,14 @@ public:
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Use a factor from 0.25 to 3, for example /nplab size 1.2 or /nplab width 0.85.");
         }
         else if(_stricmp(option,"status")==0){
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab 0.7.2] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",mode.load()==1?"Self":mode.load()==2?"All":mode.load()==3?"All + enemy HP":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
+            core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Self":mode.load()==2?"All":mode.load()==3?"All + enemy HP":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Party / bazaar / linkshell icons: %s.",options_.showStatusIcons?"detached left":"hidden");
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /nplab damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | levels on|off | autocheck on|off | traits on|off | debuffs on|off | damage <setting> | reset | status");
+        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -966,6 +1133,11 @@ public:
                 options_.scale=1;options_.width=1;options_.correctAspect=false;options_.filter=2;options_.showStatusIcons=true;changed=true;
             }
             gui->SeparatorText("Target cursor");
+            if(gui->Checkbox("Hide the game's target window",&options_.hideTarget)){
+                if(options_.hideTarget&&!options_.keepCursor){options_.keepCursor=true;cursorAttempted=false;}
+                changed=true;
+            }
+            if(gui->IsItemHovered())gui->SetTooltip("Hides the target window without HideParty and restores exactly what was there when turned off or unloaded. Also keeps the native overhead cursor.");
             if(gui->Checkbox("Keep native overhead cursor",&options_.keepCursor)){cursorAttempted=false;changed=true;}
             if(gui->IsItemHovered())gui->SetTooltip("Keeps the native animated arrow when the target panel is hidden. Leaves the panel hidden.");
             if(options_.keepCursor&&!cursorReady)gui->Text("Cursor: %s",cursorProblem);
@@ -996,45 +1168,58 @@ public:
             gui->EndTabItem();
             }
             if(gui->BeginTabItem("Details")){
-            gui->SeparatorText("Monster levels");
-            changed=gui->Checkbox("Show checked levels",&options_.showLevels)||changed;
-            changed=gui->Checkbox("Only on current target##levels",&options_.levelsTargetOnly)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Hides other level labels without clearing learned levels. Checking continues normally.");
-            changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Silent checks while levels are shown. Manual /check still prints normally. Unknown levels stay hidden.");
-            float levelSize=options_.levelScale*100;
-            if(gui->SliderFloat("Level size",&levelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){
-                options_.levelScale=levelSize/100;changed=true;
-            }
-            if(gui->IsItemHovered())gui->SetTooltip("Scales only the level label relative to the name. Changes appear immediately.");
-            if(gui->Button("Reset level size")){options_.levelScale=1;changed=true;}
-            gui->SeparatorText("Monster traits");
-            changed=gui->Checkbox("Show detection / linking / aggression",&options_.showTraits)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("MobDB defaults, not current hostility. Red: aggressive. Blue: passive. Unknown traits stay hidden; server behavior may differ.");
-            changed=gui->Checkbox("Only on current target##traits",&options_.traitsTargetOnly)||changed;
-            float traitSize=options_.traitScale*100;
-            if(gui->SliderFloat("Trait size",&traitSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){
-                options_.traitScale=traitSize/100;changed=true;
-            }
-            if(gui->Button("Reset trait size")){options_.traitScale=1;changed=true;}
-            gui->TextUnformatted("True sight / sight / sound / magic / job ability / blood / link");
-            gui->TextUnformatted("Red: aggressive   Blue: passive   Missing data: hidden");
-            if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
-            gui->SeparatorText("Debuffs");
-            changed=gui->Checkbox("Show enemy debuffs",&options_.showDebuffs)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Effects observed while loaded. Unknown earlier effects stay hidden; stale observations expire after five minutes.");
-            changed=gui->Checkbox("Enemies: only on current target##debuffs",&options_.debuffsTargetOnly)||changed;
             bool preview=previewDebuffs.load();
-            if(gui->Checkbox("Preview sample debuffs on target",&preview))previewDebuffs=preview;
-            if(gui->IsItemHovered())gui->SetTooltip("Select an enemy with Show enemy debuffs enabled. Shows poison, paralysis, blindness, silence and slow. Preview is not saved; turn it off to show observed effects.");
-            changed=gui->Checkbox("Show debuffs on self",&options_.selfDebuffs)||changed;
-            changed=gui->Checkbox("Show debuffs on party",&options_.partyDebuffs)||changed;
-            changed=gui->Checkbox("Show debuffs on alliance",&options_.allianceDebuffs)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Alliance effects are observed from combat while loaded; unseen effects are unknown. Self and party use current status lists.");
-            int iconSize=static_cast<int>(options_.debuffSize);
-            if(gui->SliderInt("Debuff icon size",&iconSize,8,64,"%d",ImGuiSliderFlags_AlwaysClamp)){
-                options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;
+            if(gui->Checkbox("Preview on target and yourself",&preview))previewDebuffs=preview;
+            if(gui->IsItemHovered())gui->SetTooltip("Shows sample debuffs (poison, paralysis, blindness, silence, slow) and a sample action cycling white/green/red on your selected target, enemy or player, and on yourself. Not saved; turn off to see observed effects.");
+            gui->SeparatorText("Plates");
+            // One row per category, highest first; each name uses the first it matches.
+            static constexpr const char* RowNames[RowCount]={"Target","You","Party/Alliance","Claimed by you",
+                "Claimed by party","Claimed by others","Unclaimed"};
+            static constexpr const char* ColumnNames[]={"Show","HP%","TP","MP","Level","Traits","Debuffs","Action","Dist."};
+            static constexpr unsigned Columns[]={RowShow,ShowHealth,ShowTp,ShowMp,ShowLevel,ShowTraits,ShowDebuffs,ShowAction,ShowDistance};
+            if(gui->BeginTable("PlateRows",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+                gui->TableSetupColumn("");
+                for(const auto* name:ColumnNames)gui->TableSetupColumn(name);
+                gui->TableHeadersRow();
+                for(unsigned row=0;row<RowCount;++row){
+                    gui->TableNextRow();gui->TableNextColumn();gui->TextUnformatted(RowNames[row]);
+                    for(unsigned c=0;c<sizeof(Columns)/sizeof(*Columns);++c){
+                        gui->TableNextColumn();
+                        if(!(RowColumns[row]&Columns[c])){gui->TextDisabled("-");continue;}
+                        char id[16];_snprintf_s(id,sizeof(id),_TRUNCATE,"##%u.%u",row,c);
+                        bool on=(options_.rows[row]&Columns[c])!=0;
+                        if(gui->Checkbox(id,&on)){options_.rows[row]^=Columns[c];changed=true;}
+                    }
+                }
+                gui->EndTable();
             }
+            gui->TextUnformatted("Target, then you, party/alliance, then enemies by claim.");
+            gui->TextUnformatted("Other players and NPCs show details only while targeted.");
+            changed=gui->Checkbox("Unclaimed: only once damaged",&options_.unclaimedDamagedOnly)||changed;
+            changed=gui->Checkbox("Deplete your and party/alliance names by HP",&options_.friendlyHealth)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Like monster HP: the lost part dims. Below 75%% the rest takes the HP%% color.");
+            if(gui->IsItemHovered())gui->SetTooltip("Unhurt unclaimed monsters show no details unless targeted.");
+            gui->SeparatorText("Levels and traits");
+            changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels stay hidden.");
+            float levelSize=options_.levelScale*100;
+            if(gui->SliderFloat("Level size",&levelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.levelScale=levelSize/100;changed=true;}
+            if(gui->Button("Reset level size")){options_.levelScale=1;changed=true;}
+            float traitSize=options_.traitScale*100;
+            if(gui->SliderFloat("Trait size",&traitSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.traitScale=traitSize/100;changed=true;}
+            if(gui->Button("Reset trait size")){options_.traitScale=1;changed=true;}
+            gui->TextUnformatted("Traits: MobDB defaults, not current hostility. Red: aggressive, blue: passive.");
+            if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
+            gui->SeparatorText("Labels");
+            float labelSize=options_.labelScale*100;
+            if(gui->SliderFloat("HP% / MP / TP / distance size",&labelSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.labelScale=labelSize/100;changed=true;}
+            if(gui->Button("Reset label size")){options_.labelScale=1;changed=true;}
+            float actionSize=options_.actionScale*100;
+            if(gui->SliderFloat("Action size",&actionSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.actionScale=actionSize/100;changed=true;}
+            if(gui->IsItemHovered())gui->SetTooltip("Readies and casts; the result stays 6 seconds: green success, red interrupted/missed/resisted.");
+            if(gui->Button("Reset action size")){options_.actionScale=.6f;changed=true;}
+            int iconSize=static_cast<int>(options_.debuffSize);
+            if(gui->SliderInt("Debuff icon size",&iconSize,8,64,"%d",ImGuiSliderFlags_AlwaysClamp)){options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;}
             if(gui->Button("Reset debuff size")){options_.debuffSize=16;changed=true;}
             if(FAILED(debuffTextureResult))gui->TextUnformatted("Debuff artwork unavailable; reload the plugin to try again.");
             gui->EndTabItem();
@@ -1054,11 +1239,11 @@ public:
         // thread before installing hooks, not the device initialization caller.
         if(!renderThread_)renderThread_=GetCurrentThreadId();
         RefreshDetailTarget();
-        if(requested.load()&&AnyDebuffs()&&debuffTexture.value){
-            sceneSeconds=static_cast<std::uint32_t>(GetTickCount64()/1000);
-            RefreshFriendlyDebuffs(core_?core_->GetMemoryManager():nullptr);
-        }else for(auto& entry:friendlyDebuffs)entry={};
+        sceneSeconds=static_cast<std::uint32_t>(GetTickCount64()/1000);
+        if(requested.load())RefreshScene(core_?core_->GetMemoryManager():nullptr);
+        else for(auto& entry:sceneMembers)entry={};
         cursorClearance[0]={};cursorClearance[1]={};
+        if(hideTarget.load()||hiddenTarget.menu)HideTargetWindow(hideTarget.load());
         if(cursorHooked){
             unsigned char bytes[5];
             if(!ReadBytes(clientBase+CursorRva,bytes,5)||std::memcmp(bytes,cursorPatch,5)){
@@ -1115,14 +1300,16 @@ bool DiscoverNative(std::uintptr_t base) {
         ||pe.OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR32_MAGIC)return false;
     const unsigned size=pe.OptionalHeader.SizeOfImage;
     if(size<4096)return false;
-    std::vector<unsigned char> image(size);
+    // A large block can be unavailable in a 32-bit game; refuse the load cleanly.
+    const std::unique_ptr<unsigned char[]> image(new(std::nothrow) unsigned char[size]());
+    if(!image)return false;
     for(unsigned offset=0;offset<size;){
         const auto count=(std::min)(0x1000u,size-offset);
-        ReadBytes(base+offset,image.data()+offset,count);
+        ReadBytes(base+offset,image.get()+offset,count);
         offset+=count;
     }
     native={};HookRva=0;
-    return native_discovery::Discover(image.data(),size,static_cast<std::uint32_t>(base),native);
+    return native_discovery::Discover(image.get(),size,static_cast<std::uint32_t>(base),native);
 }
 void ConfigureNative(std::uintptr_t base) {
     clientBase=base;
