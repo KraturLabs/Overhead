@@ -8,7 +8,6 @@ namespace nameplate_lab {
 namespace {
 bool finite(float value) noexcept { return std::isfinite(value); }
 float rounded(double value) noexcept { return static_cast<float>(value); }
-constexpr std::uint8_t StatusGlyphs[] = {0x91, 0x9C, 0x92}; // Party, bazaar, linkshell.
 bool validGlyph(const Glyph& g) noexcept {
     if(!g.valid||g.width<0||g.width>256||g.height<0||g.height>256||g.textureGroup>1
         ||g.offsetX<-256||g.offsetX>256||g.offsetY<-256||g.offsetY>256)return false;
@@ -26,32 +25,31 @@ bool ExpandName(const Input& in, std::uint8_t (&codes)[MaxGlyphs], unsigned& cou
         codes[count++] = code;
         return true;
     };
-    bool prefix = icons && icons->replace, keptIcon = false;
-    for (unsigned i = 0; i < in.length; ++i) {
-        const auto code = in.text[i];
-        if (prefix) {
-            if (code >= 0x8E) {
-                if (code == StatusGlyphs[0] || code == StatusGlyphs[1] || code == StatusGlyphs[2]) continue;
-                keptIcon = true;
-            } else if (code == 32) {
-                if (!keptIcon) continue;
-            } else prefix = false;
-        }
+    const auto expand = [&](std::uint8_t code) {
         if (code >= 0xC8 && code <= 0xCD) {
             const unsigned n = code - 0xC8;
             if (!append(in.expansionBase[n])) return false;
             for (unsigned j = 0; j < in.expansionCount[n]; ++j)
                 if (!append(0xAA)) return false;
-        } else {
-            if (!append(code)) return false;
-            if (code == 0xAC && !append(0xAD)) return false;
+            return true;
         }
-    }
-    nameCount = count;
+        return append(code) && (code != 0xAC || append(0xAD));
+    };
+    // The native prefix is a run of icon codes, then one space when its main
+    // slot is occupied. Icon-only labels keep native placement.
+    unsigned prefix = 0, begin = 0;
     if (icons && icons->replace) {
-        for (unsigned i = 0; i < 3; ++i)
-            if ((icons->active & (1u << i)) && !append(StatusGlyphs[i])) return false;
+        while (prefix < in.length && in.text[prefix] >= 0x8E) ++prefix;
+        begin = prefix;
+        if (prefix && begin < in.length && in.text[begin] == 32) ++begin;
+        if (begin == in.length) prefix = begin = 0;
     }
+    for (unsigned i = begin; i < in.length; ++i)
+        if (!expand(in.text[i])) return false;
+    nameCount = count;
+    if (icons && icons->show)
+        for (unsigned i = 0; i < prefix; ++i)
+            if (!expand(in.text[i])) return false;
     return true;
 }
 
@@ -66,7 +64,11 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     unsigned count = 0, nameCount = 0;
     if (!ExpandName(in, codes, count, nameCount, icons)) return false;
     struct Size { int width, height; } sizes[MaxGlyphs]{};
-    int total = 0, iconWidth = 0;
+    // Name and detached prefix each follow the native rules from their own first
+    // glyph: later icons shrink and overlap the one before them. The name is
+    // centered on its native width; the prefix ends where the native pen would.
+    int total = 0;
+    float iconAdvance = 0;
     const Glyph* textReference=nullptr;
     for (unsigned i = 0; i < count; ++i) {
         const auto code = codes[i];
@@ -75,43 +77,51 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const auto& g = in.glyphs[code];
         if (!validGlyph(g)) return false;
         if(i<nameCount&&!textReference&&code>32&&code<142)textReference=&g;
+        const bool detached = i >= nameCount;
+        const unsigned index = detached ? i - nameCount : i;
         auto& size = sizes[i];
         size = {g.width, g.height};
-        if (i >= nameCount) { iconWidth += size.width; continue; }
-        if (i && code >= 0x8E && code <= 0xA8) {
-            total += size.width / 2;
+        int width = 0;
+        double advance = size.width;
+        if (index && code >= 0x8E && code <= 0xA8) {
+            width = size.width / 2;
             size.width = static_cast<int>(static_cast<double>(size.width) * 0.8f);
             size.height = static_cast<int>(static_cast<double>(size.height) * 0.8f);
-        } else if (i && code == 0xAA) {
+            advance = size.width * 0.625;
+        } else if (index && code == 0xAA) {
             size.width /= 2;
             size.height /= 2;
-            total = static_cast<int>(total + size.width * 0.5);
-        } else if (code != 0xAD) total += size.width;
+            width = size.width / 2;
+            advance = size.width * 0.5;
+        } else if (code != 0xAD) width = size.width;
+        else advance = 0;
+        if (detached) iconAdvance = rounded(iconAdvance + advance);
+        else total += width;
     }
     const float start = rounded(-total * 0.5);
     float pen = start, line = 0;
     const unsigned iconCount = count - nameCount;
     if (iconCount && !in.glyphs[32].valid) return false;
-    // Native single-icon size and vertical position, with one loaded-font space
-    // between icons and the name. Additional icons grow only toward the left.
+    // The prefix ends one loaded-font space before the name, as natively.
     const float gap = iconCount ? static_cast<float>(in.glyphs[32].width) : 0;
-    const float iconStart = start - iconWidth - gap * iconCount;
+    const float iconStart = start - iconAdvance - gap;
     float detailLeft=iconStart;
     for (unsigned i = 0; i < count; ++i) {
         const auto code = codes[i];
         if (code == 10) { pen = start; line += 8; continue; }
         const bool detached = i >= nameCount;
         if (detached && i == nameCount) { pen = iconStart; line = 0; }
+        const unsigned index = detached ? i - nameCount : i;
         const auto& g = in.glyphs[code];
         const auto size = sizes[i];
         double scale = 1, advance = size.width;
         int dx = 0, dy = 0;
-        if (!detached && i && code >= 0x8E && code <= 0xA8) {
+        if (index && code >= 0x8E && code <= 0xA8) {
             scale = 0.8f; advance = size.width * 0.625;
             dx = -(size.width / 2); dy = size.height / 2;
-        } else if (!detached && i && code == 0xAA) {
+        } else if (index && code == 0xAA) {
             advance = size.width * 0.5; dx = -size.width; dy = size.height;
-        } else if (!detached && code == 0xAD) {
+        } else if (code == 0xAD) {
             scale = 0.5; advance = 0; dx = -2-size.width; dy = -2;
         }
         const double leftExact = static_cast<double>(g.offsetX + dx) + pen;
@@ -120,11 +130,12 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const float right = rounded(leftExact + size.width * scale);
         const float top = rounded(static_cast<double>(g.offsetY + dy) + line);
         const float bottom = rounded(static_cast<double>(rounded(size.height * scale)) + top);
-        pen = rounded(advance + pen + (detached ? gap : 0));
+        pen = rounded(advance + pen);
         auto& q = out.quads[out.count++];
         q.code = code; q.textureGroup = g.textureGroup;
+        // The native formatter already set the shell color: linkshell tint only
+        // when its main icon is the linkshell, otherwise neutral.
         auto color = g.textureGroup == 1 ? in.shellColor : in.nameColor;
-        if (detached && code == 0x92) color = icons->linkshellColor;
         q.alphaReference = detached || color == in.shellColor ? 0x60u : 0u;
         if (q.alphaReference) {
             const auto rgb = code == 0x92 ? color : 0x80808080u;

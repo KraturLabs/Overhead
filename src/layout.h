@@ -69,10 +69,12 @@ struct Output {
     std::uint32_t count;
     Quad quads[MaxQuads];
 };
+// Player names: the native formatter's leading icon prefix (its own priority
+// winner plus any stacked second-slot icons) is drawn left of the name, apart
+// from it, so the name alone is centered.
 struct StatusIcons {
-    bool replace = false; // Only player names use independent status icons.
-    std::uint8_t active = 0; // Party, bazaar, linkshell, from outside toward the name.
-    std::uint32_t linkshellColor = 0;
+    bool replace = false; // Only single-line player names separate the prefix.
+    bool show = true;     // False omits the prefix entirely.
 };
 static_assert(sizeof(Glyph) == 44 && sizeof(Vertex) == 28 && sizeof(Quad) == 124);
 // Shared by collection and layout so each needed glyph is read only once.

@@ -1,11 +1,11 @@
 # NameplateLab
 
-An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.18**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
+An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.19**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
 
 ## Features
 
 - Native name font, colors, icons and placement, with optional enemy HP coloring.
-- Independent player status icons: **party seeking / bazaar / linkshell**, ordered left-to-right beside the name. Active icons pack toward the name and extend left without contributing to its centering width. Each retains native single-icon size and vertical placement; linkshell retains its actual color. A checkbox shows or hides all three.
+- Player name icons kept apart from the name: whatever status icons the game shows beside a player name (seeking party, bazaar, linkshell, away, GM, mentor, new adventurer, campaign, PvP and others) are drawn just left of it, using the game's own priority, stacking, size and linkshell tint. They no longer count toward the name's centering, so the name and cursor center on the name alone. A checkbox shows or hides them.
 - Independent Size and Width controls for names and damage numbers.
 - **Match original 4:3** presets apply the complete correction through Width while retaining native height. Size and Width remain manually adjustable; there are no separate stretch toggles. Existing saved legacy correction settings retain their appearance until a preset or reset is selected. The damage preset is available immediately when display dimensions are available; selecting it enables damage adjustments.
 - Name filtering: Native, Sharp or Smooth. Uses loaded game artwork, including XIPivot overrides.

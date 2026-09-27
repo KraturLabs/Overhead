@@ -51,7 +51,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
-constexpr char Version[]="0.9.18";
+constexpr char Version[]="0.9.19";
 // Native icon expansion tables; setup requires exactly these values before any hook.
 constexpr unsigned char ExpansionBase[6]={169,169,169,169,169,169},ExpansionCount[6]={0,1,2,0,1,2};
 native_discovery::Addresses native;
@@ -170,9 +170,6 @@ static_assert(offsetof(Ashita::FFXI::entity_t, HPPercent) == 0xEC);
 static_assert(offsetof(Ashita::FFXI::entity_t, SpawnFlags) == 0x1D0);
 static_assert(offsetof(Ashita::FFXI::entity_t, ServerId) == 0x78);
 static_assert(offsetof(Ashita::FFXI::entity_t, Distance) == 0xD8); // Squared yalms.
-constexpr auto StatusFlagsOffset=offsetof(Ashita::FFXI::entity_t,Render)+offsetof(Ashita::FFXI::render_t,Flags1);
-static_assert(StatusFlagsOffset==0x124 && offsetof(Ashita::FFXI::entity_t,LinkshellColor)==0x1D4);
-static_assert(offsetof(Ashita::FFXI::render_t,Flags2)==offsetof(Ashita::FFXI::render_t,Flags1)+4);
 static_assert(offsetof(Ashita::FFXI::targetwindow_t,m_pAnkShape)==0x78
     &&offsetof(Ashita::FFXI::targetwindow_t,m_Sub)==0xB8
     &&offsetof(Ashita::FFXI::targetwindow_t,m_AnkY)==0xBE);
@@ -634,18 +631,9 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     resources.labels.scale=labelScale.load(std::memory_order_relaxed);
     resources.labels.actionScale=actionScale.load(std::memory_order_relaxed);
     if(member==0&&singleLine&&scrollXp.load(std::memory_order_relaxed)){xpFeed.Read(resources.labels.floating,sceneMillis);resources.labels.floatUp=xpUp.load(std::memory_order_relaxed);}
-    if(icons&&(spawnFlags&1)&&singleLine){
-        icons->replace=true;
-        if(showIcons){
-            std::uint32_t flags[2]; // Adjacent Render.Flags1 and Flags2, one snapshot.
-            if(!ReadBytes(entity+StatusFlagsOffset,flags,sizeof(flags)))return false;
-            // Live seeking/bazaar flags match native tests 0x97683/0x976DF and
-            // linkshell candidate 0x97875. Read independently, without priority.
-            icons->active=static_cast<std::uint8_t>(((flags[0]&0x00100000)?1:0)
-                |((flags[1]&0x00000200)?2:0)|((flags[0]&0x08000000)?4:0));
-            if((icons->active&4)&&!Read(entity+offsetof(Ashita::FFXI::entity_t,LinkshellColor),icons->linkshellColor))return false;
-        }
-    }
+    // Native formatter 0x97840 already chose, ordered and stacked the icons;
+    // only their placement changes, so no status flags are read.
+    if(icons&&(spawnFlags&1)&&singleLine){icons->replace=true;icons->show=showIcons;}
     std::memcpy(input.expansionBase,ExpansionBase,6);std::memcpy(input.expansionCount,ExpansionCount,6);
     std::uint8_t codes[MaxGlyphs];unsigned count=0,nameCount=0;
     if(!ExpandName(input,codes,count,nameCount,icons))return false;
@@ -974,7 +962,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.918;}
+    double GetVersion()const override{return 0.919;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -1097,7 +1085,7 @@ public:
             const char* setting=option+6;
             if(_stricmp(setting,"show")==0||_stricmp(setting,"hide")==0){
                 options_.showStatusIcons=_stricmp(setting,"show")==0;ChangedVisuals();
-                if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Party / bazaar / linkshell icons: %s.",options_.showStatusIcons?"detached left; text centered independently":"hidden");
+                if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Name icons: %s.",options_.showStatusIcons?"native icons detached left; name centered alone":"hidden");
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] icons show | hide");
         }
         else if(_strnicmp(option,"damage ",7)==0){
@@ -1134,7 +1122,7 @@ public:
         }
         else if(_stricmp(option,"status")==0){
             core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Self":mode.load()==2?"All":mode.load()==3?"All + enemy HP":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Party / bazaar / linkshell icons: %s.",options_.showStatusIcons?"detached left":"hidden");
+            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Name icons: %s.",options_.showStatusIcons?"detached left":"hidden");
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /nplab damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
@@ -1161,8 +1149,8 @@ public:
             if(gui->SliderFloat("Width",&width,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.width=width/100;changed=true;}
             int filter=static_cast<int>(options_.filter);
             if(gui->Combo("Rendering",&filter,"Native\0Sharp\0Smooth\0")){options_.filter=static_cast<unsigned>(filter);changed=true;}
-            changed=gui->Checkbox("Show party / bazaar / linkshell icons",&options_.showStatusIcons)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Independent icons to the left, in that order. Active icons pack toward the name; text stays centered.");
+            changed=gui->Checkbox("Show name icons",&options_.showStatusIcons)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Player status icons the game shows by a name, with its own priority and stacking, drawn left of the name. The name and cursor center on the name alone.");
             SizingReference reference;
             const bool canFit=ReadSizingReference(reference);
             gui->BeginDisabled(!canFit);

@@ -24,7 +24,7 @@ struct Options {
     unsigned filter = 2; // 0 native, 1 sharp/nearest, 2 smooth/linear.
     bool keepCursor = false; // Opt-in native arrow when the target panel is hidden.
     bool hideTarget = false; // Hide the game's target window ourselves; HideParty optional.
-    bool showStatusIcons = true; // Independent party / bazaar / linkshell icons, detached left.
+    bool showStatusIcons = true; // Native player-name icon prefix, detached left of the name.
     bool autoCheck = true;
     float levelScale = 1;
     float traitScale = 1;
