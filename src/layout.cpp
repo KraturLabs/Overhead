@@ -244,8 +244,11 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         for(const auto& floating:labels->floating){
             const auto& label=floating.text;
             if(label.length>MaxFloatText||!(floating.alpha>0)||!measure(label.text,label.length,width))continue;
+            const auto first=out.count;
             write(label.text,label.length,label.color,labels->scale,start+(total-width*labels->scale)*.5f,
                 (labels->floatUp?-textReference->height*(1.f+floating.drop):textReference->height*(1.2f+floating.drop))*labels->scale,floating.alpha<1?floating.alpha:1);
+            // Scrolling point gains always draw on top.
+            for(auto i=first;i<out.count;++i)out.quads[i].code|=FrontCode;
         }
     }
     if(traits&&traits->bits&&textReference&&validGlyph(in.glyphs[32])){
