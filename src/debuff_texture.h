@@ -5,7 +5,7 @@
 
 namespace nameplate_lab {
 // SDK Bitmap starts at BITMAPINFOHEADER. The supported client supplies 32x32
-// bottom-up BGRA or paletted pixels with native 0..128 alpha.
+// bottom-up BGRA or paletted pixels, natively with 0..128 alpha.
 inline bool DecodeStatusBitmap(const std::uint8_t* bytes,unsigned length,std::uint32_t (&pixels)[1024]) noexcept {
     if(length<40)return false;
     BITMAPINFOHEADER header;std::memcpy(&header,bytes,sizeof(header));
@@ -14,11 +14,19 @@ inline bool DecodeStatusBitmap(const std::uint8_t* bytes,unsigned length,std::ui
     const unsigned palette=header.biBitCount==8?1024:0;
     const unsigned pitch=header.biBitCount==8?32:128;
     if(length<40+palette+pitch*32)return false;
-    for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x){
+    const auto pixel=[&](unsigned x,unsigned y){
         const auto* p=bytes+40+palette+(31-y)*pitch+(header.biBitCount==8?x:x*4);
-        if(palette)p=bytes+40+*p*4;
+        return palette?bytes+40+*p*4:p;
+    };
+    // Replacement icon packs can store full 0..255 alpha; doubling those turns
+    // soft glows solid. Double only artwork that stays within native 0..128.
+    unsigned peak=0;
+    for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x)peak=(std::max)(peak,unsigned(pixel(x,y)[3]));
+    const unsigned gain=peak<=128?2:1;
+    for(unsigned y=0;y<32;++y)for(unsigned x=0;x<32;++x){
+        const auto* p=pixel(x,y);
         pixels[y*32+x]=std::uint32_t(p[0])|(std::uint32_t(p[1])<<8)|(std::uint32_t(p[2])<<16)
-            |((std::min)(255u,unsigned(p[3])*2)<<24);
+            |((std::min)(255u,unsigned(p[3])*gain)<<24);
     }
     return true;
 }
