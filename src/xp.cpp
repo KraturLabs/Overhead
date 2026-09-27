@@ -52,7 +52,7 @@ void XpFeed::Read(FloatingLabel (&out)[MaxFloating],std::uint32_t nowMs) const n
         const float t=static_cast<float>(static_cast<std::uint32_t>(nowMs-(value>>32)))/XpLifeMs;
         auto& label=out[i].text;
         if(chain){append(label,"Chain ");append(label,chain);append(label," ");}
-        append(label,"+");append(label,static_cast<unsigned>((value>>12)&0xFFFFF));append(label,Units[kind]);
+        append(label,static_cast<unsigned>((value>>12)&0xFFFFF));append(label,Units[kind]);
         label.color=Colors[kind];
         // Two name heights of drift over the life; fully visible for the first
         // third, then a slow fade to nothing.
