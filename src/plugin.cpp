@@ -228,21 +228,22 @@ void RefreshScene(IMemoryManager* memory) noexcept {
     for(auto& entry:sceneMembers)entry={};
     auto* party=memory?memory->GetParty():nullptr;
     if(!party)return;
-    const bool statuses=AnyRows(ShowDebuffs);
+    // Identities always feed categories and claims; TP, MP and statuses only when shown.
+    const bool statuses=AnyRows(ShowDebuffs),tp=AnyRows(ShowTp),mp=AnyRows(ShowMp);
     const auto zone=party->GetMemberZone(0);
     for(unsigned member=0;member<18;++member){
         if(!party->GetMemberIsActive(member)||party->GetMemberZone(member)!=zone)continue;
         auto& entry=sceneMembers[member];
         entry.identity={party->GetMemberTargetIndex(member),party->GetMemberServerId(member)};
-        entry.tp=party->GetMemberTP(member);
+        if(tp)entry.tp=party->GetMemberTP(member);
         if(member==0){
             // Your own maximum MP is exact, including a support job too low for MP.
-            auto* player=memory->GetPlayer();
-            if(player&&player->GetMPMax())entry.mp=party->GetMemberMPPercent(0);
+            auto* player=mp||statuses?memory->GetPlayer():nullptr;
+            if(mp&&player&&player->GetMPMax())entry.mp=party->GetMemberMPPercent(0);
             if(player&&statuses)entry.row=StatusDebuffs(player->GetBuffs());
             continue;
         }
-        if(MagicJob(party->GetMemberMainJob(member))||MagicJob(party->GetMemberSubJob(member)))
+        if(mp&&(MagicJob(party->GetMemberMainJob(member))||MagicJob(party->GetMemberSubJob(member))))
             entry.mp=party->GetMemberMPPercent(member);
         if(!statuses)continue;
         if(member<6){
@@ -504,12 +505,10 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     }
     std::uint32_t spawnFlags=0;
     if(!Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),spawnFlags))return false;
-    if(mode.load(std::memory_order_relaxed)==3){
-        std::uint8_t hp=100;
-        if((spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags)
-            &&Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100)
-            resources.healthPercent=hp;
-    }
+    const bool enemy=(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags);
+    std::uint8_t hp=0;
+    const bool hpKnown=Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100;
+    if(mode.load(std::memory_order_relaxed)==3&&enemy&&hpKnown)resources.healthPercent=hp;
     std::uint32_t text=0,length=0;
     if(!Read(frame+0x18,length)||!Read(frame+0x6DC,text)||length>36)return false;
     input.length=length;
@@ -521,14 +520,11 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     for(unsigned i=0;i<length;++i)if(input.text[i]==10){resources.healthPercent=100;singleLine=false;}
     const bool selected=detailTarget.id==identity&&detailTarget.index==entityIndex;
     resources.identity={entityIndex,identity};
-    const bool enemy=(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags);
     unsigned member=18;
     for(unsigned m=0;m<18;++m)
         if(sceneMembers[m].identity.id==identity&&sceneMembers[m].identity.index==entityIndex){member=m;break;}
     // NPCs (not players, monsters or trusts in your party) get no details, even targeted.
     const bool plainNpc=!(spawnFlags&1)&&!enemy&&member==18&&!npcFeatures.load(std::memory_order_relaxed);
-    std::uint8_t hp=0;
-    const bool hpKnown=Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100;
     // The first matching category decides this name's details. Other players and
     // NPCs match none unless selected. You keep your own row even when targeted.
     unsigned row=RowCount;
@@ -755,8 +751,9 @@ struct FilterScope {
         if(!filter)return true;
         if(!progress.Check(device->GetTextureStageState(0,D3DTSS_MINFILTER,&min),"Get MINFILTER")
             ||!progress.Check(device->GetTextureStageState(0,D3DTSS_MAGFILTER,&mag),"Get MAGFILTER"))return false;
-        changed=true;progress.nativeSafe=false;
         const auto value=filter==1?D3DTEXF_POINT:D3DTEXF_LINEAR;
+        if(min==static_cast<DWORD>(value)&&mag==static_cast<DWORD>(value))return true; // Already selected: nothing to set or restore.
+        changed=true;progress.nativeSafe=false;
         return progress.Check(device->SetTextureStageState(0,D3DTSS_MINFILTER,value),"Set MINFILTER")
             &&progress.Check(device->SetTextureStageState(0,D3DTSS_MAGFILTER,value),"Set MAGFILTER");
     }
@@ -785,8 +782,8 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     // The native submit changes only render target, viewport and projection, so
     // state set here holds for this whole name. Native drawing runs between names.
     unsigned group=~0u;DWORD alpha=~0u;
-    // Front quads (the action label) skip the depth test so bodies and scenery
-    // never cover them; the prior ZFUNC is restored before leaving this name.
+    // Front quads (parts the row puts on top) skip the depth test so bodies and
+    // scenery never cover them; the prior ZFUNC is restored before leaving this name.
     DWORD zfunc=0;bool zSaved=false,zFront=false;
     const auto setFront=[&](bool front){
         if(front==zFront)return true;
@@ -796,6 +793,17 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         }
         if(!progress.Check(device->SetRenderState(D3DRS_ZFUNC,front?D3DCMP_ALWAYS:zfunc),front?"Set ZFUNC":"Restore ZFUNC"))return false;
         zFront=front;
+        return true;
+    };
+    // Consecutive quads sharing texture, alpha reference and depth test go out as
+    // one triangle list: each quad's two strip triangles, in the same order. The
+    // native submit forwards type and count, drawing the list once per target.
+    constexpr unsigned BatchQuads=32;
+    Vertex batch[BatchQuads*6];unsigned batched=0;
+    const auto flush=[&]{
+        if(!batched)return true;
+        if(!progress.Check(submit(resources.graphics,D3DPT_TRIANGLELIST,batched*2,batch,sizeof(Vertex)),"Submit"))return false;
+        progress.submitted+=batched;batched=0;
         return true;
     };
     const auto fail=[&]{
@@ -813,23 +821,28 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         Quad pieces[2];
         const auto* quads=&output.quads[i];
         unsigned pieceCount=1;
-        if(health.enabled){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
+        if(health.enabled&&HealthLetter(*quads)){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
         for(unsigned piece=0;piece<pieceCount;++piece){
             const auto& q=quads[piece];
-            if(!setFront((q.code&nameplate_lab::FrontCode)!=0))return fail();
-            if(q.textureGroup!=group){
-                if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture"))return fail();
-                group=q.textureGroup;
+            const bool front=(q.code&nameplate_lab::FrontCode)!=0;
+            if(front!=zFront||q.textureGroup!=group||q.alphaReference!=alpha||batched==BatchQuads){
+                if(!flush()||!setFront(front))return fail();
+                if(q.textureGroup!=group){
+                    if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture"))return fail();
+                    group=q.textureGroup;
+                }
+                if(q.alphaReference!=alpha){
+                    if(!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,q.alphaReference),"Set ALPHAREF"))return fail();
+                    alpha=q.alphaReference;
+                }
             }
-            if(q.alphaReference!=alpha){
-                if(!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,q.alphaReference),"Set ALPHAREF"))return fail();
-                alpha=q.alphaReference;
-            }
-            if(!progress.Check(submit(resources.graphics,D3DPT_TRIANGLESTRIP,2,q.vertices,sizeof(Vertex)),"Submit"))return fail();
-            ++progress.submitted;
+            // Strip 0,1,2,3 draws (0,1,2) then (1,3,2), each led by the same vertex.
+            auto* v=batch+batched++*6;
+            v[0]=q.vertices[0];v[1]=q.vertices[1];v[2]=q.vertices[2];
+            v[3]=q.vertices[1];v[4]=q.vertices[3];v[5]=q.vertices[2];
         }
     }
-    if(!setFront(false))return fail();
+    if(!flush()||!setFront(false))return fail();
     if(alpha&&!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF"))return finish(false);
     return finish(true);
 }
@@ -1151,7 +1164,7 @@ public:
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off|up|down | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions on|off | damage <setting> | reset | status");
+        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -1237,7 +1250,8 @@ public:
             if(gui->Checkbox("Preview on target and yourself",&preview))previewDebuffs=preview;
             if(gui->IsItemHovered())gui->SetTooltip("Shows sample debuffs (poison, paralysis, blindness, silence, slow) and a sample action cycling white/green/red on your selected target, enemy or player, and on yourself. Not saved; turn off to see observed effects.");
             gui->SeparatorText("Plates");
-            // One row per category, highest first; each name uses the first it matches.
+            // One row per category; each name uses the first it matches, except that you keep
+            // your own row when targeting yourself.
             static constexpr const char* RowNames[RowCount]={"Target","You","Party/Alliance","Claimed by you",
                 "Claimed by party","Claimed by others","Unclaimed"};
             static constexpr const char* ColumnNames[]={"Show","HP%","TP","MP","Level","Traits","Debuffs","Action","Dist."};
@@ -1258,14 +1272,14 @@ public:
                 }
                 gui->EndTable();
             }
-            gui->TextUnformatted("Target, then you, party/alliance, then enemies by claim.");
-            gui->TextUnformatted("Other players and NPCs show details only while targeted.");
+            gui->TextUnformatted("You, then target, party/alliance, then enemies by claim.");
+            gui->TextUnformatted("Other players show details only while targeted.");
             changed=gui->Checkbox("Apply features to NPCs",&options_.npcFeatures)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Off: targeted NPCs show no HP%%, distance or other details.");
             changed=gui->Checkbox("Unclaimed: only once damaged",&options_.unclaimedDamagedOnly)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Unhurt unclaimed monsters show no details unless targeted.");
             changed=gui->Checkbox("Deplete your and party/alliance names by HP",&options_.friendlyHealth)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Like monster HP: the lost part dims. Below 75%% the rest takes the HP%% color.");
-            if(gui->IsItemHovered())gui->SetTooltip("Unhurt unclaimed monsters show no details unless targeted.");
             gui->SeparatorText("On top");
             if(gui->BeginTable("FrontRows",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
                 gui->TableSetupColumn("");
@@ -1287,7 +1301,7 @@ public:
             gui->TextUnformatted("Checked parts draw over bodies and scenery. Nearer names can still cover them.");
             gui->SeparatorText("Levels and traits");
             changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels stay hidden.");
+            if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels show Lv.?? until a check or widescan reply.");
             gui->TextUnformatted("Traits: MobDB defaults, not current hostility. Red: aggressive, blue: passive.");
             if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
             gui->SeparatorText("Labels");

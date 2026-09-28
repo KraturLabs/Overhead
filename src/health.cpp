@@ -5,11 +5,6 @@
 
 namespace nameplate_lab {
 namespace {
-bool letter(const Quad& q) noexcept {
-    // Native font group 0 holds letters/punctuation; group 1 holds status icons.
-    // Spaces affect the gap between letters but never extend the outer bounds.
-    return q.textureGroup == 0 && (q.code & ~FrontCode) > 32 && (q.code & ~FrontCode) < 142;
-}
 void dim(Quad& q) noexcept {
     for (auto& v : q.vertices) {
         const auto rgb = v.color;
@@ -25,7 +20,7 @@ HealthFill MeasureHealth(const Output& output, unsigned percent) noexcept {
     float left = std::numeric_limits<float>::max(), right = -left;
     for (unsigned i = 0; i < output.count; ++i) {
         const auto& q = output.quads[i];
-        if (!letter(q)) continue;
+        if (!HealthLetter(q)) continue;
         const float x0 = q.vertices[0].x, x1 = q.vertices[1].x;
         if (!std::isfinite(x0) || !std::isfinite(x1) || x1 < x0) return {};
         left = std::min(left, x0); right = std::max(right, x1);
@@ -36,7 +31,7 @@ HealthFill MeasureHealth(const Output& output, unsigned percent) noexcept {
 
 unsigned HealthQuads(const Quad& original, const HealthFill& fill, Quad (&pieces)[2]) noexcept {
     pieces[0] = original;
-    if (!fill.enabled || !letter(original) || !std::isfinite(fill.boundary)) return 1;
+    if (!fill.enabled || !HealthLetter(original) || !std::isfinite(fill.boundary)) return 1;
     const float left = original.vertices[0].x, right = original.vertices[1].x;
     if (fill.tint)
         for (auto& v : pieces[0].vertices) v.color = (v.color & 0xFF000000u) | fill.tint;
