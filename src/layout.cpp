@@ -288,7 +288,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 end-width*labels->actionScale,textReference->height*.2f);
             mark(first,ShowAction);
         }
-        constexpr float XpSize=.4f; // Scrolling points keep their own size, independent of distance.
+        constexpr float XpSize=.60f; // Scrolling points keep their own size, independent of distance.
         for(const auto& floating:labels->floating){
             const auto& label=floating.text;
             if(label.length>MaxFloatText||!(floating.alpha>0))continue;
