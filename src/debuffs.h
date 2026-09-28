@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
 #include "layout.h"
 
 namespace nameplate_lab {
@@ -34,7 +35,9 @@ class Debuffs {
         // One coherent effect + expiry per load. No native pointers or draw lock.
         std::atomic<std::uint64_t> effects[MaxDebuffs]{};
     } rows_[0x900];
-    std::mutex mutex_; // Relevant packet writers only; SDK has no serialization contract.
+    // Relevant packet writers only (always exclusive); SDK has no serialization contract.
+    // Zero-initialized SRW lock keeps the table out of the DLL file, unlike std::mutex.
+    std::shared_mutex mutex_;
 public:
     void Clear();
     void Forget(unsigned index,std::uint32_t id);

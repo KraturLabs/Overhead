@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
 #include "layout.h"
 
 namespace nameplate_lab {
@@ -13,7 +14,7 @@ class Levels {
     struct Request { std::uint32_t id=0, manual=0; bool automatic=false, queued=false, discarded=false; } requests_[Slots];
     // SDK packet callbacks have no same-thread contract. Drawing only loads a
     // packed atomic value; this lock is confined to relevant packet events.
-    std::mutex mutex_;
+    std::shared_mutex mutex_; // Exclusive only; zero-initialized, so the tables stay out of the DLL file.
     std::uint64_t nextCheck_=0;
 public:
     void Clear();

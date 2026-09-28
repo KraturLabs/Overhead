@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <shared_mutex>
 #include "layout.h"
 
 namespace nameplate_lab {
@@ -25,7 +26,9 @@ class Actions {
         std::atomic<std::uint64_t> state{0};
         std::atomic<std::uint64_t> text[(MaxLabel+1)/8]{};
     } rows_[0x900];
-    std::mutex mutex_; // Relevant packet writers only; drawing uses atomic loads.
+    // Relevant packet writers only (always exclusive); drawing uses atomic loads. An SRW
+    // lock starts as zeros, so the table is not stored in the DLL; std::mutex is not.
+    std::shared_mutex mutex_;
 public:
     void Clear();
     void Forget(unsigned index,std::uint32_t id);
