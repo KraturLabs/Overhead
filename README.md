@@ -16,6 +16,7 @@ An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. C
 - Scrolling XP, LP, CP and EP gains anchored to your own name, including chains (General tab). Up to three entries drift down and fade over three seconds; toggle with `/nplab xp on|off`.
 - Saved settings; update in game with unload, replace the DLL, then load.
 - Monster HP% after the name, colored by FFXI's HP warning bands, then distance in yalms. Both default to the current target only.
+- Monster weaknesses and resistances (MobDB weapon and element damage modifiers), first right of the name: a green-barred row of weaknesses and a red-barred row of resistances, each its own Plates column. Both shown stack like HP/MP/TP (weaknesses on top); one alone sits on the name's baseline. Target only by default.
 - Action names under the name while enemies ready abilities or cast, and for your own, party and alliance casts, weapon skills and job abilities. The result stays six seconds: green for success, red for interrupted, missed or resisted.
 - Observed enemy debuffs in a centered icon row above the name, with independent display, target-only and size controls. Uses the client's status artwork through Ashita resources; no addon dependency.
 
@@ -51,7 +52,7 @@ If upgrading from the old resident-loader version, exit the game once before rep
 /nplab status
 ```
 
-The settings window has General and Details tabs. General contains names, cursor, target-window and damage controls. Details starts with **Preview on target and yourself**, then the **Plates** table (which details show for each category of name; see below), automatic checking, and size sliders for levels, traits, HP%/MP/TP/distance labels, actions and debuff icons. Settings save under the Ashita installation's `config/nameplatelab/settings.ini`; settings from earlier versions migrate automatically.
+The settings window has General and Details tabs. General contains names, cursor, target-window and damage controls. Details starts with **Preview on target and yourself**, then the **Plates** table (which details show for each category of name; see below), automatic checking, and size sliders for traits, HP%/MP/TP/distance labels, actions, debuff icons, weaknesses and resistances. Settings save under the Ashita installation's `config/nameplatelab/settings.ini`; settings from earlier versions migrate automatically.
 
 ```text
 /nplab fit
@@ -75,6 +76,10 @@ The settings window has General and Details tabs. General contains names, cursor
 /nplab tp on
 /nplab distance on
 /nplab distance off
+/nplab weakness on
+/nplab weakness off
+/nplab resistance on
+/nplab resistance off
 /nplab actions on
 /nplab actions off
 /nplab debuffs on
@@ -121,7 +126,7 @@ NameplateLab embeds its own compact trait database and icon atlas in the DLL. No
 
 Data and seven original icons come directly from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330), revision `eee7e1ad5d0a49eb667f1f88602d9fce76276330`, under its [MIT license](licenses/MobDB.txt). The notice is also embedded as the DLL's `MOBDB_LICENSE` resource. This snapshot covers 245 zones; it is upstream data, not a Phoenix-specific server export. Missing monsters remain unknown rather than being labeled passive. An index override applies only when its name matches; otherwise the zone's name default is used. Database aggression does not predict level-dependent or conditional attacks.
 
-The generated inputs are checked in, so normal builds need neither network access nor Pillow. To regenerate deliberately, clone upstream at the pinned revision and run `python tools/prepare_traits.py <checkout>` with Pillow installed. The converter reads only data/artwork, removes irrelevant fields and redundant index overrides, and never executes Lua. It produces 11,649 name entries, 498 distinct index overrides, and a 32 KiB atlas. A managed D3D8 texture is created at graphics initialization and released after safe detach; ordinary device resets retain it. If setup fails, only traits are omitted and the settings panel reports it.
+The generated inputs are checked in, so normal builds need neither network access nor Pillow. To regenerate deliberately, clone upstream at the pinned revision and run `python tools/prepare_traits.py <checkout>` with Pillow installed. The converter reads only data/artwork, removes irrelevant fields and redundant index overrides, and never executes Lua. It produces 11,649 name entries (with weakness/resistance masks: any modifier above 1 is a weakness, below 1 a resistance), 535 distinct index overrides, and a 96 KiB atlas (trait and modifier icons, padded to 256x128 on the GPU). A managed D3D8 texture is created at graphics initialization and released after safe detach; ordinary device resets retain it. If setup fails, only traits are omitted and the settings panel reports it.
 
 ### Target-only details
 
@@ -151,7 +156,7 @@ Actions reuse the existing combat callback and bounded identity-keyed tracker pa
 
 ### Plate categories, TP/MP and claims (0.9.10)
 
-The Details tab's **Plates** table has one row per category and one column per detail (Show, HP%, TP, MP, Level, Traits, Debuffs, Action, Distance); a dash means not applicable. Each name uses the first row it matches: **You** (also while you target yourself), **Target** (your selected target, any kind), **Party/Alliance** (active members in your zone, including trusts), then monsters **Claimed by you**, **Claimed by party**, **Claimed by others** and **Unclaimed**. Other players show details only while targeted. NPCs get the name restyling but no details, even when targeted, unless **Apply features to NPCs** is on (off by default). Each row's Show switches that row. The earlier per-detail toggles and "Only on current target" options are migrated into the table once: target-only becomes Target only. Defaults keep earlier behavior (levels, traits, debuffs and actions on every monster; HP% and distance on the target) and add HP% and TP on you and your party. `/nplab <detail> on|off` switches a column in every applicable row.
+The Details tab's **Plates** table has one row per category and one column per detail (Show, HP%, TP, MP, Level, Traits, Debuffs, Action, Distance, Weak, Resist); a dash means not applicable. Each name uses the first row it matches: **You** (also while you target yourself), **Target** (your selected target, any kind), **Party/Alliance** (active members in your zone, including trusts), then monsters **Claimed by you**, **Claimed by party**, **Claimed by others** and **Unclaimed**. Other players show details only while targeted. NPCs get the name restyling but no details, even when targeted, unless **Apply features to NPCs** is on (off by default). Each row's Show switches that row. The earlier per-detail toggles and "Only on current target" options are migrated into the table once: target-only becomes Target only. Defaults keep earlier behavior (levels, traits, debuffs and actions on every monster; HP% and distance on the target) and add HP% and TP on you and your party. `/nplab <detail> on|off` switches a column in every applicable row.
 
 TP (percent of 1000 TP, as in BattleSight; soft blue) and MP (percent, soft green) follow HP% and come from the party roster, sampled once per scene. MP appears only for your own MP pool or a member whose main or support job uses MP. Claims come from the monster's claim field, whose low word holds the claimer's server ID; it is matched against you and your roster once per name, without an actor scan. **Unclaimed: only once damaged** (off by default) skips details on unhurt unclaimed monsters unless targeted. BattleSight's 20-nearest cap is not needed: details follow the names the game already draws.
 

@@ -4,11 +4,12 @@
 namespace nameplate_lab {
 constexpr unsigned MaxGlyphs = 36;
 constexpr unsigned MaxDebuffs = 32;
+constexpr unsigned TraitTextureHeight = 128; // Trait/modifier atlas: 32 px cells, 8 per row.
 constexpr unsigned MaxLabel = 31; // Action names; HP% and distance are shorter.
 constexpr unsigned MaxFloating = 3, MaxFloatText = 20; // Gained points below your name.
-// Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5), an action name
-// and the floating point gains.
-constexpr unsigned MaxQuads = MaxGlyphs + 6 + 3 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + MaxLabel + MaxFloating*MaxFloatText;
+// Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5), weakness and
+// resistance rows (two bar quads and up to 12 icons each), an action name and the floating point gains.
+constexpr unsigned MaxQuads = MaxGlyphs + 6 + 3 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + 2*(2+12) + MaxLabel + MaxFloating*MaxFloatText;
 struct DebuffRow {
     unsigned count=0;
     std::uint16_t effects[MaxDebuffs]{};
@@ -45,6 +46,9 @@ struct SideLabels {
     TextLabel health, mp, tp, distance, action;
     FloatingLabel floating[MaxFloating];
     float scale=1, actionScale=.6f; // User factors relative to the name size.
+    // MobDB damage modifier bits (traits.h); each row's icons scale within its fixed slot.
+    std::uint16_t weak=0, resist=0;
+    float weakScale=1, resistScale=1, traitScale=.8f; // A lone row takes the trait size.
     // Parts drawn over world geometry, as DetailColumn bits; RowShow is the name.
     unsigned front=0;
 };

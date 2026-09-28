@@ -132,9 +132,9 @@ std::atomic<bool> scrollXp{false};
 std::atomic<bool> growTarget{false};
 std::atomic<float> growFarSize{1};
 Actions actions;
-// Fixed sizes: level 60%, traits 80%, distance 45% of the name.
-constexpr float LevelScale=.6f,TraitScale=.8f,LabelScale=.45f;
-std::atomic<float> actionScale{.6f};
+// Fixed sizes: level 60%, distance 45% of the name. Traits follow their slider.
+constexpr float LevelScale=.6f,LabelScale=.45f;
+std::atomic<float> actionScale{.6f},weakScale{1},resistScale{1},traitScale{.8f};
 Levels levels;
 std::atomic<unsigned> traitZone{0}; // Initial SDK zone, then zone-transition packets.
 TraitTexture traitTexture;
@@ -144,7 +144,7 @@ void PublishVisuals(const Options& options) noexcept {
     autoCheck=options.autoCheck;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;npcFeatures=options.npcFeatures;
-    actionScale=options.actionScale;scrollXp=options.scrollXp;
+    actionScale=options.actionScale;weakScale=options.weakScale;resistScale=options.resistScale;traitScale=options.traitScale;scrollXp=options.scrollXp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
     damageCorrectAspect.store(options.damageCorrectAspect);
@@ -302,7 +302,7 @@ void ReceiveAction(void* context,const ActionEvent& event) {
 // Detail column named by a "<name> on|off" command, or 0.
 unsigned DetailCommand(const char* option) noexcept {
     static constexpr struct {const char* name;unsigned column;} Commands[]={{"levels",ShowLevel},{"traits",ShowTraits},
-        {"debuffs",ShowDebuffs},{"health",ShowHealth},{"mp",ShowMp},{"tp",ShowTp},{"distance",ShowDistance},{"actions",ShowAction}};
+        {"debuffs",ShowDebuffs},{"health",ShowHealth},{"mp",ShowMp},{"tp",ShowTp},{"distance",ShowDistance},{"actions",ShowAction},{"weakness",ShowWeak},{"resistance",ShowResist}};
     const char* space=std::strchr(option,' ');
     if(!space)return 0;
     for(const auto& command:Commands)
@@ -574,13 +574,18 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         resources.level.reserve=true;
         if(!resources.level.length){resources.level.length=5;std::memcpy(resources.level.text,"Lv.??",5);} // Placeholder until known.
     }
-    if((features&ShowTraits)&&enemy&&traitTexture.value){
+    if((features&(ShowTraits|ShowWeak|ShowResist))&&enemy&&traitTexture.value){
         // Use the already validated visible entity; never scan actors or retain
         // its native pointer. Only the first 24 bytes are the entity name.
+        // One lookup serves traits and weaknesses/resistances.
         char name[25]{};
         if(ReadBytes(entity+offsetof(Ashita::FFXI::entity_t,Name),name,24)){
-            resources.traits.bits=LookupTraits(traitZone.load(std::memory_order_relaxed),entityIndex,name);
-            resources.traits.scale=TraitScale;
+            const auto monster=LookupMonster(traitZone.load(std::memory_order_relaxed),entityIndex,name);
+            const float traits=traitScale.load(std::memory_order_relaxed);
+            if(features&ShowTraits){resources.traits.bits=monster.bits;resources.traits.scale=traits;}
+            resources.labels.traitScale=traits;
+            if(features&ShowWeak){resources.labels.weak=monster.weak;resources.labels.weakScale=weakScale.load(std::memory_order_relaxed);}
+            if(features&ShowResist){resources.labels.resist=monster.resist;resources.labels.resistScale=resistScale.load(std::memory_order_relaxed);}
             resources.textures[2]=traitTexture.value;
         }
     }
@@ -689,6 +694,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             if(!loadGlyph(static_cast<std::uint8_t>(resources.level.check[i])))resources.level.checkLength=0; // Level stays.
     }
     if(resources.traits.bits&&!loadGlyph(32))resources.traits={};
+    if((resources.labels.weak||resources.labels.resist)&&!loadGlyph(32))resources.labels.weak=resources.labels.resist=0;
     for(auto* label:{&resources.labels.health,&resources.labels.mp,&resources.labels.tp,&resources.labels.distance,&resources.labels.action}){
         bool ready=!label->length||loadGlyph(32);
         for(unsigned i=0;ready&&i<label->length;++i)ready=loadGlyph(static_cast<std::uint8_t>(label->text[i]));
@@ -1095,7 +1101,7 @@ public:
                 for(unsigned row=0;row<RowCount;++row)
                     options_.rows[row]=_stricmp(setting,"on")==0?options_.rows[row]|(column&RowColumns[row]):options_.rows[row]&~column;
                 ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] levels | traits | debuffs | health | mp | tp | distance | actions on | off");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] levels | traits | debuffs | health | mp | tp | distance | actions | weakness | resistance on | off");
         }
         else if(_strnicmp(option,"xp ",3)==0){
             if(_stricmp(option+3,"on")==0||_stricmp(option+3,"off")==0){options_.scrollXp=_stricmp(option+3,"on")==0;ChangedVisuals();}
@@ -1164,7 +1170,7 @@ public:
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions on|off | damage <setting> | reset | status");
+        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions|weakness|resistance on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -1254,9 +1260,9 @@ public:
             // your own row when targeting yourself.
             static constexpr const char* RowNames[RowCount]={"Target","You","Party/Alliance","Claimed by you",
                 "Claimed by party","Claimed by others","Unclaimed"};
-            static constexpr const char* ColumnNames[]={"Show","HP%","TP","MP","Level","Traits","Debuffs","Action","Dist."};
-            static constexpr unsigned Columns[]={RowShow,ShowHealth,ShowTp,ShowMp,ShowLevel,ShowTraits,ShowDebuffs,ShowAction,ShowDistance};
-            if(gui->BeginTable("PlateRows",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+            static constexpr const char* ColumnNames[]={"Show","HP%","TP","MP","Level","Traits","Debuffs","Action","Dist.","Weak","Resist"};
+            static constexpr unsigned Columns[]={RowShow,ShowHealth,ShowTp,ShowMp,ShowLevel,ShowTraits,ShowDebuffs,ShowAction,ShowDistance,ShowWeak,ShowResist};
+            if(gui->BeginTable("PlateRows",12,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
                 gui->TableSetupColumn("");
                 for(const auto* name:ColumnNames)gui->TableSetupColumn(name);
                 gui->TableHeadersRow();
@@ -1281,7 +1287,7 @@ public:
             changed=gui->Checkbox("Deplete your and party/alliance names by HP",&options_.friendlyHealth)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Like monster HP: the lost part dims. Below 75%% the rest takes the HP%% color.");
             gui->SeparatorText("On top");
-            if(gui->BeginTable("FrontRows",10,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+            if(gui->BeginTable("FrontRows",12,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
                 gui->TableSetupColumn("");
                 gui->TableSetupColumn("Name");
                 for(unsigned c=1;c<sizeof(ColumnNames)/sizeof(*ColumnNames);++c)gui->TableSetupColumn(ColumnNames[c]);
@@ -1299,10 +1305,21 @@ public:
                 gui->EndTable();
             }
             gui->TextUnformatted("Checked parts draw over bodies and scenery. Nearer names can still cover them.");
-            gui->SeparatorText("Levels and traits");
+            gui->SeparatorText("Levels, traits, weaknesses");
             changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels show Lv.?? until a check or widescan reply.");
             gui->TextUnformatted("Traits: MobDB defaults, not current hostility. Red: aggressive, blue: passive.");
+            gui->TextUnformatted("Weak/Resist: MobDB damage taken, first right of the name. Green bar: weaknesses, red bar: resistances.");
+            float traitSize=options_.traitScale*100;
+            if(gui->SliderFloat("Trait size",&traitSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.traitScale=traitSize/100;changed=true;}
+            if(gui->IsItemHovered())gui->SetTooltip("Trait icons left of the level, relative to the name height.");
+            if(gui->Button("Reset trait size")){options_.traitScale=.8f;changed=true;}
+            float weakSize=options_.weakScale*100,resistSize=options_.resistScale*100;
+            if(gui->SliderFloat("Weakness size",&weakSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.weakScale=weakSize/100;changed=true;}
+            if(gui->IsItemHovered())gui->SetTooltip("Weapon types and elements that deal more than normal damage. Relative to the row's HP/MP/TP-column height.");
+            if(gui->SliderFloat("Resistance size",&resistSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.resistScale=resistSize/100;changed=true;}
+            if(gui->IsItemHovered())gui->SetTooltip("Weapon types and elements that deal less than normal damage, including immunity.");
+            if(gui->Button("Reset weakness/resistance size")){options_.weakScale=options_.resistScale=1;changed=true;}
             if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
             gui->SeparatorText("Labels");
             float actionSize=options_.actionScale*100;

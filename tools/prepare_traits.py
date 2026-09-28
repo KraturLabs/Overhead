@@ -11,6 +11,8 @@ import subprocess
 
 REVISION = 'eee7e1ad5d0a49eb667f1f88602d9fce76276330'
 FLAGS = ('TrueSight', 'Sight', 'Sound', 'Magic', 'JA', 'Blood', 'Link')
+# Damage taken multipliers: above 1 is a weakness, below 1 a resistance.
+MODIFIERS = ('Slashing', 'Piercing', 'H2H', 'Impact', 'Fire', 'Ice', 'Wind', 'Earth', 'Lightning', 'Water', 'Light', 'Dark')
 ROOT = Path(__file__).resolve().parents[1]
 STRING = r"'((?:\\.|[^'\\])*)'"
 
@@ -55,6 +57,16 @@ def generate(source):
                 bits |= 0x100
                 if aggro.group(1) == 'true':
                     bits |= 0x200
+            weak = resist = 0
+            for bit, modifier in enumerate(MODIFIERS):
+                value = re.search(r'\b' + modifier + r'=([0-9.]+)', line)
+                if not value:
+                    raise ValueError(f'Missing modifier {modifier} in {path}: {line}')
+                if float(value.group(1)) > 1:
+                    weak |= 1 << bit
+                elif float(value.group(1)) < 1:
+                    resist |= 1 << bit
+            bits = (bits, weak, resist)
             if section == 'names':
                 key_match = re.fullmatch(STRING, key)
                 if not key_match or lua_string(key_match.group(1)) != name or name in by_name:
@@ -75,8 +87,8 @@ def generate(source):
            f'// Upstream {REVISION}; data only, no addon implementation.',
            'constexpr TraitRow NameRows[] = {']
     def row(value):
-        name, bits, index = value
-        return '{' + json.dumps(name, ensure_ascii=True) + f', {bits}, {index}' + '},'
+        name, (bits, weak, resist), index = value
+        return '{' + json.dumps(name, ensure_ascii=True) + f', {bits}, {index}, {weak}, {resist}' + '},'
     out.extend(map(row, names))
     out += ['};', 'constexpr TraitRow IndexRows[] = {']
     out.extend(map(row, indices))
@@ -84,7 +96,8 @@ def generate(source):
     out.extend('{' + ','.join(map(str, zones.get(z, (0, 0, 0, 0)))) + '},' for z in range(max(zones) + 1))
     out += ['};', '']
     (ROOT / 'src/trait_data.inc').write_text('\n'.join(out), encoding='utf-8')
-    atlas = Image.new('RGBA', (256, 32), (255, 255, 255, 0))
+    # Row 0: trait icons and a white cell; rows 1-2: modifier icons.
+    atlas = Image.new('RGBA', (256, 96), (255, 255, 255, 0))
     for i, flag in enumerate(FLAGS):
         icon = Image.open(source / 'icons' / (flag + '.png')).convert('RGBA')
         if icon.size != (32, 32):
@@ -92,6 +105,11 @@ def generate(source):
         atlas.paste(icon, (i * 32, 0))
     # Final cell is white for the outlined aggression strip.
     atlas.paste((255, 255, 255, 255), (224, 0, 256, 32))
+    for i, modifier in enumerate(MODIFIERS):
+        icon = Image.open(source / 'icons' / (modifier + '.png')).convert('RGBA')
+        if icon.size != (32, 32):
+            raise ValueError('Expected original 32x32 icon: ' + modifier)
+        atlas.paste(icon, (i % 8 * 32, (1 + i // 8) * 32))
     pixels = [f'0x{a:02X}{r:02X}{g:02X}{b:02X}u' for r, g, b, a in atlas.getdata()]
     atlas_text = '// Generated from MobDB icons; MIT, see licenses/MobDB.txt.\nconstexpr std::uint32_t TraitPixels[] = {\n'
     atlas_text += '\n'.join(','.join(pixels[i:i+16]) + ',' for i in range(0, len(pixels), 16)) + '\n};\n'
@@ -99,7 +117,7 @@ def generate(source):
     (ROOT / 'licenses').mkdir(exist_ok=True)
     shutil.copyfile(source / 'LICENSE', ROOT / 'licenses/MobDB.txt')
     print(json.dumps(dict(revision=revision, zones=len(zones), source_rows=source_rows,
-                          names=len(names), distinct_index_overrides=len(indices), atlas_bytes=256*32*4), indent=2))
+                          names=len(names), distinct_index_overrides=len(indices), atlas_bytes=256*96*4), indent=2))
 
 
 if __name__ == '__main__':

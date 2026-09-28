@@ -6,14 +6,14 @@ namespace nameplate_lab {
 // details shown for it; RowShow switches the whole row.
 enum DetailRow : unsigned { RowTarget, RowSelf, RowParty, RowClaimedSelf, RowClaimedParty, RowClaimedOther, RowUnclaimed, RowCount };
 enum DetailColumn : unsigned {
-    RowShow=1, ShowHealth=2, ShowTp=4, ShowMp=8, ShowLevel=16, ShowTraits=32, ShowDebuffs=64, ShowAction=128, ShowDistance=256
+    RowShow=1, ShowHealth=2, ShowTp=4, ShowMp=8, ShowLevel=16, ShowTraits=32, ShowDebuffs=64, ShowAction=128, ShowDistance=256, ShowWeak=512, ShowResist=1024
 };
-constexpr unsigned EnemyColumns=RowShow|ShowHealth|ShowLevel|ShowTraits|ShowDebuffs|ShowAction|ShowDistance;
+constexpr unsigned EnemyColumns=RowShow|ShowHealth|ShowLevel|ShowTraits|ShowDebuffs|ShowAction|ShowDistance|ShowWeak|ShowResist;
 // Columns that apply to each row; the rest are not applicable.
-constexpr unsigned RowColumns[RowCount]={511,RowShow|ShowHealth|ShowTp|ShowMp|ShowDebuffs|ShowAction,
+constexpr unsigned RowColumns[RowCount]={2047,RowShow|ShowHealth|ShowTp|ShowMp|ShowDebuffs|ShowAction,
     RowShow|ShowHealth|ShowTp|ShowMp|ShowDebuffs|ShowAction|ShowDistance,EnemyColumns,EnemyColumns,EnemyColumns,EnemyColumns};
-// Existing details keep their earlier defaults; HP%/distance stay target-only.
-constexpr unsigned DefaultRows[RowCount]={511,RowShow|ShowHealth|ShowTp|ShowDebuffs|ShowAction,
+// Existing details keep their earlier defaults; HP%/distance and weak/resist stay target-only.
+constexpr unsigned DefaultRows[RowCount]={2047,RowShow|ShowHealth|ShowTp|ShowDebuffs|ShowAction,
     RowShow|ShowHealth|ShowTp|ShowDebuffs|ShowAction,RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction,
     RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction,RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction,
     RowShow|ShowLevel|ShowTraits|ShowDebuffs|ShowAction};
@@ -35,6 +35,8 @@ struct Options {
     bool npcFeatures = false; // NPCs keep the native plate unless on.
     bool unclaimedDamagedOnly = false; // Unclaimed row only once the monster is damaged.
     float actionScale = .6f; // Action size.
+    float traitScale = .8f; // Trait icons, relative to the name height.
+    float weakScale = 1, resistScale = 1; // Weakness/resistance icons, relative to their fixed row height.
     bool scrollXp = false; // Experimental: gained points drift from your name.
     bool growTarget = false; // Experimental: control the selected target plate's distant size.
     float growFarSize = 1; // Readability floor at 20 yalms, relative to native full size.

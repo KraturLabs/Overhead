@@ -246,8 +246,23 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             mark(first,ShowLevel);
         }
     }
+    // One quad from the trait atlas: 32 px cells, 8 per row. Cell 7 is solid white;
+    // cells 8-19 are the damage modifier icons.
+    const auto atlasQuad=[&](float left,float y,float width,float height,unsigned cell,std::uint32_t color){
+        auto& q=out.quads[out.count++];
+        q.code=0x200u+cell;q.textureGroup=2;q.alphaReference=0;
+        for(unsigned v=0;v<4;++v){
+            q.vertices[v]={in.x+in.scaleX*(left+(v&1?width:0)),
+                in.y+in.scaleY*(y+(v&2?height:0)),in.z,1,color,
+                cell==7?240.f/256:(cell%8*32+(v&1?31.5f:.5f))/256,
+                (cell==7?16.f:cell/8*32+(v&2?31.5f:.5f))/TraitTextureHeight};
+        }
+    };
+    // Column slots in name heights from the name's middle: three values at 35% with 3% gaps,
+    // two at 46.5%, both centred 5% below the middle; a lone value sits on the baseline at 60%.
+    constexpr float RowGap=.03f,Offset=.05f,Three=.35f,Two=.465f,Single=.6f;
     if(labels&&nameCount&&validGlyph(in.glyphs[32])){
-        // HP%, MP, TP then distance follow the name's advance on its baseline; the action
+        // Weaknesses/resistances, HP%, MP, TP then distance follow the name's advance; the action
         // overlaps its lower right corner. None shift the name, level, traits or cursor.
         const float space=static_cast<float>(in.glyphs[32].width),end=start+total;
         float next=end+space,width=0;
@@ -257,6 +272,38 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             write(label.text,label.length,label.color,labels->scale,next,0);next+=width*labels->scale+space;
             mark(first,bit);
         };
+        // Weaknesses over resistances first after the name, in the two-value HP/MP/TP slots.
+        // A lone row mirrors the traits instead: trait-sized icons centred on the name, led by
+        // a bar shaped and placed like the aggression bar. Bars: green weak, red resist.
+        if(textReference&&(labels->weak||labels->resist)){
+            const float height=static_cast<float>(textReference->height);
+            const float middle=textReference->offsetY+height*.5f;
+            const bool both=labels->weak&&labels->resist;
+            float top=Offset-(2*Two+RowGap)*.5f,column=0;
+            const struct{std::uint16_t mask;float scale;std::uint32_t tint;unsigned bit;} sets[2]={
+                {labels->weak,labels->weakScale,0x3C6C3Cu,ShowWeak},{labels->resist,labels->resistScale,0x6C3C3Cu,ShowResist}};
+            for(const auto& set:sets){
+                if(!set.mask)continue;
+                const auto first=out.count;
+                const float size=(both?Two:labels->traitScale)*height*set.scale;
+                const float y=both?middle+(top+Two*.5f)*height-size*.5f:middle-size*.5f;
+                const float barHeight=both?size:height*.5625f,barY=both?y:middle-barHeight*.5f+height*.05f;
+                const float iconGap=both?size*.1f:2*labels->traitScale*set.scale;
+                // Half-intensity tints under native 2x modulation, like the aggression bar.
+                atlasQuad(next,barY-.5f,2,barHeight+1,7,DetailAlpha);
+                atlasQuad(next+.5f,barY,1,barHeight,7,DetailAlpha|set.tint);
+                float iconPen=next+(both?2+iconGap:4);
+                for(unsigned m=0;m<ModifierCount;++m){
+                    if(!(set.mask&(1u<<m)))continue;
+                    atlasQuad(iconPen,y,size,size,8+m,DetailAlpha|0x808080u);
+                    iconPen+=size+iconGap;
+                }
+                column=std::max(column,iconPen-iconGap-next);
+                mark(first,set.bit);
+                top+=Two+RowGap;
+            }
+            next+=column+space*.5f; // HP/MP/TP follow half a space after.
+        }
         // HP over MP over TP in one column centered on the name's middle, nudged down 5%:
         // three at 35% of the name height with 3% gaps, two at 46.5%, both around the same centre.
         // A lone value sits on the name's baseline at 60%.
@@ -269,7 +316,6 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 if(row.label->length<=4&&measure(row.label->text,row.label->length,widths[rowCount])){
                     present[rowCount]=row.label;bits[rowCount++]=row.bit;
                 }
-            constexpr float RowGap=.03f,Offset=.05f,Three=.35f,Two=.465f,Single=.6f;
             float top=Offset-(rowCount==2?2*Two+RowGap:3*Three+2*RowGap)*.5f,column=0; // Name heights from the name's middle.
             for(unsigned i=0;i<rowCount;++i){
                 const float size=rowCount==1?Single:rowCount==2?Two:Three;
@@ -323,16 +369,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         float right=detailLeft-in.glyphs[32].width;
         const auto alpha=DetailAlpha;
         const auto first=out.count;
-        const auto quad=[&](float left,float y,float width,float height,unsigned cell,std::uint32_t color){
-            auto& q=out.quads[out.count++];
-            q.code=0x200u+cell;q.textureGroup=2;q.alphaReference=0;
-            for(unsigned v=0;v<4;++v){
-                q.vertices[v]={in.x+in.scaleX*(left+(v&1?width:0)),
-                    in.y+in.scaleY*(y+(v&2?height:0)),in.z,1,color,
-                    cell==7?240.f/256:(cell*32+(v&1?31.5f:.5f))/256,
-                    cell==7?.5f:(v&2?31.5f:.5f)/32};
-            }
-        };
+        const auto& quad=atlasQuad;
         if(traits->bits&AggroKnown){
             // Quiet separator: one local pixel wide, 56% of the name height, centered
             // like the HP/MP/TP column (cell middle nudged down 5%). Not slider-sized.

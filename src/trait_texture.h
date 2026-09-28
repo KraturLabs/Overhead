@@ -13,13 +13,18 @@ struct TraitTexture {
     void Release() noexcept {if(value){value->Release();value=nullptr;}}
     HRESULT Initialize(IDirect3DDevice8* device) noexcept {
         Release();
-        auto result=device->CreateTexture(256,32,1,0,D3DFMT_A8R8G8B8,D3DPOOL_MANAGED,&value);
+        // 96 atlas rows padded to a power-of-two height; the padding stays transparent.
+        auto result=device->CreateTexture(256,TraitTextureHeight,1,0,D3DFMT_A8R8G8B8,D3DPOOL_MANAGED,&value);
         if(FAILED(result))return result;
         D3DLOCKED_RECT lock{};
         result=value->LockRect(0,&lock,nullptr,0);
         if(SUCCEEDED(result)){
-            for(unsigned y=0;y<32;++y)
-                std::memcpy(static_cast<char*>(lock.pBits)+y*lock.Pitch,TraitPixels+y*256,256*4);
+            constexpr unsigned rows=sizeof(TraitPixels)/(256*4);
+            for(unsigned y=0;y<TraitTextureHeight;++y){
+                auto* line=static_cast<char*>(lock.pBits)+y*lock.Pitch;
+                if(y<rows)std::memcpy(line,TraitPixels+y*256,256*4);
+                else std::memset(line,0,256*4);
+            }
             result=value->UnlockRect(0);
         }
         if(FAILED(result))Release();
