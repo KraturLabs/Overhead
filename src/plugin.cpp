@@ -131,6 +131,9 @@ XpFeed xpFeed;
 std::atomic<bool> scrollXp{false};
 std::atomic<bool> growTarget{false};
 std::atomic<float> growFarSize{1};
+// Selected target's native factor, low-passed on the draw thread (see GrowFactor).
+struct GrowSmoothing { DetailTarget target;float value=0;std::uint32_t millis=0; } growSmoothing;
+constexpr float GrowSmoothingSeconds=.4f;
 Actions actions;
 // Fixed sizes: level 60%, distance 45% of the name. Traits follow their slider.
 constexpr float LevelScale=.6f,LabelScale=.45f;
@@ -616,11 +619,17 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             const float distance=std::sqrt(squared);
             if(enlarge){
                 // The setup-validated native routine multiplies both scales by
-                // this stack argument. Use it to add only missing readability;
-                // the addition fades to zero nearby, with no timer.
+                // this stack argument. The added size fades to none nearby.
                 float nativeFactor=0;
-                if(Read(frame+0x6E0,nativeFactor))
-                    resources.grow=GrowFactor(nativeFactor,distance,growFarSize.load(std::memory_order_relaxed));
+                if(Read(frame+0x6E0,nativeFactor)&&std::isfinite(nativeFactor)&&nativeFactor>0){
+                    auto& smooth=growSmoothing;
+                    const auto elapsed=sceneMillis-smooth.millis;
+                    // New target or a long gap starts from the live value.
+                    if(smooth.target.id!=identity||smooth.target.index!=entityIndex||!(smooth.value>0)||elapsed>1000)smooth.value=nativeFactor;
+                    else if(elapsed)smooth.value+=(nativeFactor-smooth.value)*(1-std::exp(-static_cast<float>(elapsed)/(1000*GrowSmoothingSeconds)));
+                    smooth.target={entityIndex,identity};smooth.millis=sceneMillis;
+                    resources.grow=GrowFactor(nativeFactor,distance,growFarSize.load(std::memory_order_relaxed),smooth.value);
+                }
             }
             const auto tenths=static_cast<unsigned>(distance*10+.5f);
             if((features&ShowDistance)&&tenths&&tenths<10000){ // Hidden at 0.0.
@@ -1240,10 +1249,10 @@ public:
             changed=gui->Checkbox("Scrolling XP from your name",&options_.scrollXp)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Experience, limit, capacity and exemplar points you gain drift down from your name and fade over 3 seconds.");
             changed=gui->Checkbox("Enlarge distant target",&options_.growTarget)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Extra enlargement fades out as you approach. Within 3 yalms the plate is exactly its ordinary size; at 20 yalms it is raised to Distant size only if needed. Your Size and Width settings still apply.");
+            if(gui->IsItemHovered())gui->SetTooltip("Beyond 25 yalms a smaller target plate is raised to Distant size. The extra size fades smoothly as you approach and is gone by 3 yalms, where the plate is its ordinary size. Your Size and Width settings still apply.");
             float growSize=options_.growFarSize*100;
             if(gui->SliderFloat("Distant size",&growSize,25,100,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.growFarSize=growSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Readability size at 20 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
+            if(gui->IsItemHovered())gui->SetTooltip("Readability size at 25 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
             if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
             gui->SeparatorText("Nameplate font");
             gui->TextUnformatted("Uses the game's loaded font, including XIPivot DATs.");

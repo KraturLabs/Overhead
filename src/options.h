@@ -39,7 +39,7 @@ struct Options {
     float weakScale = 1, resistScale = 1; // Weakness/resistance icons, relative to their fixed row height.
     bool scrollXp = false; // Experimental: gained points drift from your name.
     bool growTarget = false; // Experimental: control the selected target plate's distant size.
-    float growFarSize = 1; // Readability floor at 20 yalms, relative to native full size.
+    float growFarSize = 1; // Readability size at 25 yalms, relative to native full size.
     float damageScale = 1, damageWidth = 1;
     bool damageEnabled = false, damageCorrectAspect = false;
     unsigned mode = 3;   // All supported names plus enemy HP, by default.
@@ -49,8 +49,9 @@ bool ValidOptions(const Options& value) noexcept;
 // Settings are validated at input boundaries; drawing validates live scales and results.
 bool SizeScale(float& scaleX,float& scaleY,const Options& options) noexcept;
 bool SizeName(Input& input, const Options& options) noexcept;
-// Fade added distant readability to zero by 3 yalms; never shrink native size.
-float GrowFactor(float nativeFactor, float distance, float farSize) noexcept;
+// Fade added readability from 25 yalms to zero at 3; never shrink native size.
+// smoothedNative: the native factor low-passed over time (0 = use nativeFactor).
+float GrowFactor(float nativeFactor, float distance, float farSize, float smoothedNative = 0) noexcept;
 bool GrowName(Input& input, float factor) noexcept;
 bool OriginalWidth(unsigned screenWidth, unsigned screenHeight, float& width) noexcept;
 bool ApplyOriginalSizing(Options& options, unsigned screenWidth, unsigned screenHeight) noexcept;

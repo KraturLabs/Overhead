@@ -33,13 +33,18 @@ bool ValidOptions(const Options& v) noexcept {
         &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3
         &&std::isfinite(v.growFarSize)&&v.growFarSize>=.25f&&v.growFarSize<=1;
 }
-float GrowFactor(float nativeFactor,float distance,float farSize) noexcept {
+float GrowFactor(float nativeFactor,float distance,float farSize,float smoothedNative) noexcept {
     // Native factor is live stack data; zero cannot be divided out. Leave this
     // name unchanged if it is unavailable, rather than disabling the feature.
     if(!std::isfinite(nativeFactor)||nativeFactor<=0)return 1;
-    const float t=std::clamp((distance-3.f)/17.f,0.f,1.f);
-    const float extra=(std::max)(farSize/nativeFactor-1,0.f);
-    return 1+extra*t*t*(3-2*t);
+    if(!std::isfinite(smoothedNative)||smoothedNative<=0)smoothedNative=nativeFactor;
+    // Blend from farSize at 25 yalms to the native size at 3 (user tuned).
+    // The native factor rises in small steps; blending with it raw shrank the
+    // plate between steps and pumped, so the blend uses the smoothed factor.
+    // Never smaller than the live native plate.
+    const float t=std::clamp((distance-3.f)/22.f,0.f,1.f);
+    const float shown=smoothedNative+(std::max)(farSize-smoothedNative,0.f)*t*t*(3-2*t);
+    return (std::max)(shown/nativeFactor,1.f);
 }
 bool GrowName(Input& input,float factor) noexcept {
     if(factor==1)return true;
