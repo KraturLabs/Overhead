@@ -21,7 +21,8 @@ HealthFill MeasureHealth(const Output& output, unsigned percent) noexcept {
     for (unsigned i = 0; i < output.count; ++i) {
         const auto& q = output.quads[i];
         if (!HealthLetter(q)) continue;
-        const float x0 = q.vertices[0].x, x1 = q.vertices[1].x;
+        const float inset=q.textureGroup==TextTexture?output.textInset:0;
+        const float x0 = q.vertices[0].x+inset, x1 = q.vertices[1].x-inset;
         if (!std::isfinite(x0) || !std::isfinite(x1) || x1 < x0) return {};
         left = std::min(left, x0); right = std::max(right, x1);
     }

@@ -13,7 +13,8 @@ constexpr std::uint32_t HealthColor(unsigned percent) noexcept {
 // Spaces affect the gap between letters but never extend the outer bounds.
 // Only these quads take the HP fill; decorations (0x100|code) and icons do not.
 inline bool HealthLetter(const Quad& q) noexcept {
-    return q.textureGroup == 0 && (q.code & ~FrontCode) > 32 && (q.code & ~FrontCode) < 142;
+    return (q.textureGroup == 0 || q.textureGroup == TextTexture)
+        && (q.code & ~FrontCode) > 32 && (q.code & ~FrontCode) < 142;
 }
 // Called only for damaged monsters (and optionally your party). Full health is byte-for-byte original.
 HealthFill MeasureHealth(const Output& output, unsigned percent) noexcept;

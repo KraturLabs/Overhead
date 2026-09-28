@@ -18,20 +18,18 @@ bool ParseFactor(const char* text, float& value) noexcept {
     value=parsed;return true;
 }
 bool ValidOptions(const Options& v) noexcept {
+    for(unsigned row=0;row<RowCount;++row)
+        if((v.rows[row]&~RowColumns[row])||(v.front[row]&~RowColumns[row]))return false;
     return std::isfinite(v.scale)&&v.scale>=.25f&&v.scale<=3
         &&std::isfinite(v.width)&&v.width>=.25f&&v.width<=3&&v.filter<=2&&v.mode<=3
         &&v.debuffSize>=4&&v.debuffSize<=24
-        &&!(v.rows[0]&~RowColumns[0])&&!(v.rows[1]&~RowColumns[1])&&!(v.rows[2]&~RowColumns[2])&&!(v.rows[3]&~RowColumns[3])
-        &&!(v.rows[4]&~RowColumns[4])&&!(v.rows[5]&~RowColumns[5])&&!(v.rows[6]&~RowColumns[6])
-        &&!(v.front[0]&~RowColumns[0])&&!(v.front[1]&~RowColumns[1])&&!(v.front[2]&~RowColumns[2])&&!(v.front[3]&~RowColumns[3])
-        &&!(v.front[4]&~RowColumns[4])&&!(v.front[5]&~RowColumns[5])&&!(v.front[6]&~RowColumns[6])
         &&std::isfinite(v.actionScale)&&v.actionScale>=.25f&&v.actionScale<=3
         &&std::isfinite(v.traitScale)&&v.traitScale>=.25f&&v.traitScale<=3
         &&std::isfinite(v.weakScale)&&v.weakScale>=.25f&&v.weakScale<=3
         &&std::isfinite(v.resistScale)&&v.resistScale>=.25f&&v.resistScale<=3
         &&std::isfinite(v.damageScale)&&v.damageScale>=.25f&&v.damageScale<=3
         &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3
-        &&std::isfinite(v.growFarSize)&&v.growFarSize>=.25f&&v.growFarSize<=1;
+        &&std::isfinite(v.growFarSize)&&v.growFarSize>=.25f&&v.growFarSize<=1&&v.fontOutline<=6&&v.fontSoften<=2&&v.drainRows<(1u<<RowCount);
 }
 float GrowFactor(float nativeFactor,float distance,float farSize,float smoothedNative) noexcept {
     // Native factor is live stack data; zero cannot be divided out. Leave this
@@ -39,12 +37,12 @@ float GrowFactor(float nativeFactor,float distance,float farSize,float smoothedN
     if(!std::isfinite(nativeFactor)||nativeFactor<=0)return 1;
     if(!std::isfinite(smoothedNative)||smoothedNative<=0)smoothedNative=nativeFactor;
     // Blend from farSize at 25 yalms to the native size at 3 (user tuned).
-    // The native factor rises in small steps; blending with it raw shrank the
-    // plate between steps and pumped, so the blend uses the smoothed factor.
-    // Never smaller than the live native plate.
+    // The native factor flickers and rises in small steps; blending with it raw
+    // pumped and following it raw shook, so the blend and its floor use the
+    // smoothed factor every other name also follows. Never below that size.
     const float t=std::clamp((distance-3.f)/22.f,0.f,1.f);
     const float shown=smoothedNative+(std::max)(farSize-smoothedNative,0.f)*t*t*(3-2*t);
-    return (std::max)(shown/nativeFactor,1.f);
+    return shown/nativeFactor;
 }
 bool GrowName(Input& input,float factor) noexcept {
     if(factor==1)return true;
@@ -52,7 +50,7 @@ bool GrowName(Input& input,float factor) noexcept {
     if(!std::isfinite(x)||!std::isfinite(y)||x<=0||y<=0||x>128||y>128)return false;
     input.scaleX=x;input.scaleY=y;return true;
 }
-bool SizeScale(float& scaleX,float& scaleY,const Options& v) noexcept {
+bool SizeScale(float& scaleX,float& scaleY,const Appearance& v) noexcept {
     if (!std::isfinite(scaleX)||!std::isfinite(scaleY)
         ||scaleX<=0||scaleY<=0||scaleX>128||scaleY>128) return false;
     float x=scaleX,y=scaleY;
@@ -62,7 +60,7 @@ bool SizeScale(float& scaleX,float& scaleY,const Options& v) noexcept {
     if(!std::isfinite(x)||!std::isfinite(y)||x<=0||y<=0||x>128||y>128)return false;
     scaleX=x;scaleY=y;return true;
 }
-bool SizeName(Input& input,const Options& v) noexcept {
+bool SizeName(Input& input,const Appearance& v) noexcept {
     return SizeScale(input.scaleX,input.scaleY,v);
 }
 // Put the complete 4:3 screen correction into Width; retain native height.
@@ -97,6 +95,11 @@ Options LoadOptions(const char* path) noexcept {
         return result.ec==std::errc{}&&result.ptr==end&&parsed<=limit?parsed:fallback;
     };
     out.correctAspect=readChoice("CorrectAspect",0,1)!=0;
+    GetPrivateProfileStringA("Nameplates","FontFile","",out.fontFile,sizeof(out.fontFile),path);
+    GetPrivateProfileStringA("Nameplates","FontFamily","",out.fontFamily,sizeof(out.fontFamily),path);
+    out.fontOutline=readChoice("FontOutline",3,6);
+    out.fontItalic=readChoice("FontItalic",0,1)!=0;
+    out.fontSoften=readChoice("FontSoften",0,2);
     out.filter=readChoice("Filter",2,2);
     out.keepCursor=readChoice("KeepCursor",0,1)!=0;
     out.hideTarget=readChoice("HideTarget",0,1)!=0;
@@ -106,7 +109,6 @@ Options LoadOptions(const char* path) noexcept {
     out.debuffSize=debuffSize>=4?debuffSize:16;
     out.unclaimedDamagedOnly=readChoice("UnclaimedDamagedOnly",0,1)!=0;
     out.npcFeatures=readChoice("NpcFeatures",0,1)!=0;
-    out.friendlyHealth=readChoice("FriendlyHealth",0,1)!=0;
     out.scrollXp=readChoice("ScrollXp",0,1)!=0;
     out.growTarget=readChoice("GrowTarget",0,1)!=0;
     {
@@ -114,7 +116,7 @@ Options LoadOptions(const char* path) noexcept {
         GetPrivateProfileStringA("Nameplates","GrowFarSize","1",text,sizeof(text),path);
         if(ParseFactor(text,farSize))out.growFarSize=(std::min)(farSize,1.f);
     }
-    static constexpr const char* RowKeys[RowCount]={"RowTarget","RowSelf","RowParty","RowClaimedSelf","RowClaimedParty","RowClaimedOther","RowUnclaimed"};
+    static constexpr const char* RowKeys[RowCount]={"RowTarget","RowSelf","RowParty","RowClaimedSelf","RowClaimedParty","RowClaimedOther","RowUnclaimed","RowOtherPlayers"};
     if(readChoice(RowKeys[0],4096,2047)==4096){
         // Earlier per-detail toggles; their defaults produce DefaultRows.
         const auto old=[&](const char* key,unsigned fallback){return readChoice(key,fallback,1)!=0;};
@@ -123,7 +125,7 @@ Options LoadOptions(const char* path) noexcept {
         const auto column=[&](unsigned bit,const char* show,const char* targetOnly,unsigned targetOnlyDefault){
             if(!old(show,1))return;
             out.rows[RowTarget]|=bit;
-            if(!old(targetOnly,targetOnlyDefault))for(unsigned row=RowClaimedSelf;row<RowCount;++row)out.rows[row]|=bit;
+            if(!old(targetOnly,targetOnlyDefault))for(unsigned row=RowClaimedSelf;row<=RowUnclaimed;++row)out.rows[row]|=bit;
         };
         column(ShowLevel,"ShowLevels","LevelsTargetOnly",0);
         column(ShowTraits,"ShowTraits","TraitsTargetOnly",0);
@@ -143,11 +145,16 @@ Options LoadOptions(const char* path) noexcept {
     else ParseFactor(text,out.weakScale);
     GetPrivateProfileStringA("Nameplates","ResistScale","1",text,sizeof(text),path);ParseFactor(text,out.resistScale);
     GetPrivateProfileStringA("Nameplates","TraitScale","0.8",text,sizeof(text),path);ParseFactor(text,out.traitScale);
-    static constexpr const char* FrontKeys[RowCount]={"FrontTarget","FrontSelf","FrontParty","FrontClaimedSelf","FrontClaimedParty","FrontClaimedOther","FrontUnclaimed"};
+    static constexpr const char* FrontKeys[RowCount]={"FrontTarget","FrontSelf","FrontParty","FrontClaimedSelf","FrontClaimedParty","FrontClaimedOther","FrontUnclaimed","FrontOtherPlayers"};
     for(unsigned row=0;row<RowCount;++row)
         out.front[row]=readChoice(FrontKeys[row],DefaultFront[row],2047)&RowColumns[row];
     GetPrivateProfileStringA("Nameplates","ActionScale","0.6",text,sizeof(text),path);ParseFactor(text,out.actionScale);
     out.mode=readChoice("Mode",3,3);
+    // Migrate the former enemy display mode and friendly checkbox only when the
+    // new per-category setting has not been saved yet.
+    const unsigned legacyDrain=(out.mode==3?EnemyDrainRows:0)
+        |(readChoice("FriendlyHealth",0,1)?(1u<<RowSelf)|(1u<<RowParty):0);
+    out.drainRows=readChoice("DrainRows",legacyDrain,(1u<<RowCount)-1);
     GetPrivateProfileStringA("Nameplates","DamageScale","1",text,sizeof(text),path);ParseFactor(text,out.damageScale);
     GetPrivateProfileStringA("Nameplates","DamageWidth","1",text,sizeof(text),path);ParseFactor(text,out.damageWidth);
     out.damageEnabled=readChoice("DamageEnabled",0,1)!=0;
@@ -173,15 +180,15 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     char growFarSize[32]{};
     const auto gm=std::to_chars(growFarSize,growFarSize+sizeof(growFarSize)-1,value.growFarSize);
     if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||as.ec!=std::errc{}||ws.ec!=std::errc{}||rs.ec!=std::errc{}||ts.ec!=std::errc{}||gm.ec!=std::errc{})return false;
-    char content[1536]{};
+    char content[3072]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nFriendlyHealth=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nTraitScale=%s\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nTraitScale=%s\r\nFontFile=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
-        value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.friendlyHealth?1u:0u,actionScale,value.scrollXp?1u:0u,
+        value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.drainRows,actionScale,value.scrollXp?1u:0u,
         value.growTarget?1u:0u,growFarSize,value.front[0],value.front[1],value.front[2],value.front[3],
-        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale);
+        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontFile,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

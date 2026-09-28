@@ -15,6 +15,7 @@
 #include "cursor.h"
 #include <ffxi/enums.h>
 #include "layout.h"
+#include "text_font.h"
 #include "health.h"
 #include "levels.h"
 #include "actions.h"
@@ -51,7 +52,9 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
-constexpr char Version[]="0.9.19";
+constexpr char Version[]="0.9.30";
+text_font::Font textFont;
+IDirect3DTexture8* textTexture=nullptr;
 // Native icon expansion tables; setup requires exactly these values before any hook.
 constexpr unsigned char ExpansionBase[6]={169,169,169,169,169,169},ExpansionCount[6]={0,1,2,0,1,2};
 native_discovery::Addresses native;
@@ -103,7 +106,8 @@ HRESULT debuffTextureResult=S_OK;
 std::atomic<bool> previewDebuffs{false};
 std::atomic<unsigned> rowFeatures[RowCount]; // Saved per-category detail columns.
 std::atomic<unsigned> rowFront[RowCount]; // Parts each category draws on top.
-std::atomic<bool> unclaimedDamagedOnly{false},friendlyHealth{false},npcFeatures{false};
+std::atomic<bool> unclaimedDamagedOnly{false},npcFeatures{false};
+std::atomic<unsigned> drainRows{EnemyDrainRows};
 // Whether any shown row enables this detail column.
 bool AnyRows(unsigned column) noexcept {
     for(const auto& row:rowFeatures){const auto value=row.load(std::memory_order_relaxed);if((value&RowShow)&&(value&column))return true;}
@@ -131,9 +135,18 @@ XpFeed xpFeed;
 std::atomic<bool> scrollXp{false};
 std::atomic<bool> growTarget{false};
 std::atomic<float> growFarSize{1};
-// Selected target's native factor, low-passed on the draw thread (see GrowFactor).
-struct GrowSmoothing { DetailTarget target;float value=0;std::uint32_t millis=0; } growSmoothing;
-constexpr float GrowSmoothingSeconds=.4f;
+// Each entity's native size factor, low-passed on the draw thread (see Collect).
+struct SizeSmoothing { std::uint32_t id=0,millis=0;float value=0; } sizeSmoothing[0x900];
+constexpr float SizeSmoothingSeconds=.4f;
+float SmoothedSize(std::uint16_t index,std::uint32_t identity,float live) noexcept {
+    auto& smooth=sizeSmoothing[index];
+    const auto elapsed=sceneMillis-smooth.millis;
+    // A new entity at this index or a long gap starts from the live value.
+    if(smooth.id!=identity||!(smooth.value>0)||elapsed>1000)smooth.value=live;
+    else if(elapsed)smooth.value+=(live-smooth.value)*(1-std::exp(-static_cast<float>(elapsed)/(1000*SizeSmoothingSeconds)));
+    smooth.id=identity;smooth.millis=sceneMillis;
+    return smooth.value;
+}
 Actions actions;
 // Fixed sizes: level 60%, distance 45% of the name. Traits follow their slider.
 constexpr float LevelScale=.6f,LabelScale=.45f;
@@ -146,7 +159,7 @@ void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;hideTarget=options.hideTarget;
     autoCheck=options.autoCheck;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
-    unclaimedDamagedOnly=options.unclaimedDamagedOnly;friendlyHealth=options.friendlyHealth;npcFeatures=options.npcFeatures;
+    unclaimedDamagedOnly=options.unclaimedDamagedOnly;drainRows=options.drainRows;npcFeatures=options.npcFeatures;
     actionScale=options.actionScale;weakScale=options.weakScale;resistScale=options.resistScale;traitScale=options.traitScale;scrollXp=options.scrollXp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
@@ -158,8 +171,8 @@ void PublishVisuals(const Options& options) noexcept {
     nameFilter.store(options.filter,std::memory_order_relaxed);
     showNameStatusIcons.store(options.showStatusIcons,std::memory_order_relaxed);
 }
-Options Visuals() noexcept {
-    Options value;
+Appearance Visuals() noexcept {
+    Appearance value;
     value.scale=nameScale.load(std::memory_order_relaxed);
     value.width=nameWidth.load(std::memory_order_relaxed);
     value.correctAspect=correctAspect.load(std::memory_order_relaxed);
@@ -473,7 +486,7 @@ unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
     }
     if(!damageEnabled.load())return 0;
 
-    Options options;options.scale=damageScale.load();options.width=damageWidth.load();
+    Appearance options;options.scale=damageScale.load();options.width=damageWidth.load();
     options.correctAspect=damageCorrectAspect.load();
     if(!SizeScale(scales[0],scales[1],options)){damageRejected.fetch_add(1);return 0;}
     // The pointer is proven to be this native call's stack slot, read just above.
@@ -483,7 +496,8 @@ unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
 }
 
 struct Resources {
-    void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[4];
+    void* graphics; IDirect3DDevice8* device; IDirect3DBaseTexture8* textures[5];
+    bool textOutline=false;
     unsigned healthPercent = 100;
     std::uint32_t healthTint = 0;
     LevelLabel level;
@@ -511,7 +525,6 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     const bool enemy=(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags);
     std::uint8_t hp=0;
     const bool hpKnown=Read(entity+offsetof(Ashita::FFXI::entity_t,HPPercent),hp)&&hp<=100;
-    if(mode.load(std::memory_order_relaxed)==3&&enemy&&hpKnown)resources.healthPercent=hp;
     std::uint32_t text=0,length=0;
     if(!Read(frame+0x18,length)||!Read(frame+0x6DC,text)||length>36)return false;
     input.length=length;
@@ -548,6 +561,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
             }
         }
     }
+    if(row==RowCount&&(spawnFlags&1)&&!enemy)row=RowOtherPlayers;
     unsigned features=0;
     if(singleLine&&row<RowCount){
         features=rowFeatures[row].load(std::memory_order_relaxed);
@@ -600,10 +614,9 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         label.text[label.length++]=static_cast<char>('0'+value%10);
         if(percent)label.text[label.length++]='%';
     };
-    // Your own and party/alliance names deplete like monsters; the remaining
-    // letters take the HP% band color, keeping the native color at 75% and above.
-    if(member<18&&singleLine&&hpKnown&&friendlyHealth.load(std::memory_order_relaxed)){
-        resources.healthPercent=hp;resources.healthTint=hp<75?HealthColor(hp):0;
+    // Name depletion is independent of which detail labels this row displays.
+    if(row<RowCount&&singleLine&&hpKnown&&(drainRows.load(std::memory_order_relaxed)&(1u<<row))){
+        resources.healthPercent=hp;resources.healthTint=!enemy&&hp<75?HealthColor(hp):0;
     }
     if((features&ShowHealth)&&hpKnown)
         number(resources.labels.health,hp,HealthColor(hp),true);
@@ -612,25 +625,22 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         number(resources.labels.mp,static_cast<unsigned>(sceneMembers[member].mp),0x4E734Eu,true);
     if(member<18&&(features&ShowTp)&&sceneMembers[member].tp<=3000)
         number(resources.labels.tp,sceneMembers[member].tp/10,0x466478u,true);
+    // The setup-validated native routine multiplies both scales by this stack
+    // argument. The game derives it from projected depth and it flickers between
+    // neighbouring values, shaking names; every name follows it low-passed instead.
+    float nativeFactor=0,smoothedFactor=0;
+    if(Read(frame+0x6E0,nativeFactor)&&std::isfinite(nativeFactor)&&nativeFactor>0){
+        smoothedFactor=SmoothedSize(entityIndex,identity,nativeFactor);
+        resources.grow=smoothedFactor/nativeFactor;
+    }
     const bool enlarge=selected&&member!=0&&singleLine&&growTarget.load(std::memory_order_relaxed);
     if((features&ShowDistance)||enlarge){
         float squared=0;
         if(Read(entity+offsetof(Ashita::FFXI::entity_t,Distance),squared)&&squared>=0&&squared<1e6f){
             const float distance=std::sqrt(squared);
-            if(enlarge){
-                // The setup-validated native routine multiplies both scales by
-                // this stack argument. The added size fades to none nearby.
-                float nativeFactor=0;
-                if(Read(frame+0x6E0,nativeFactor)&&std::isfinite(nativeFactor)&&nativeFactor>0){
-                    auto& smooth=growSmoothing;
-                    const auto elapsed=sceneMillis-smooth.millis;
-                    // New target or a long gap starts from the live value.
-                    if(smooth.target.id!=identity||smooth.target.index!=entityIndex||!(smooth.value>0)||elapsed>1000)smooth.value=nativeFactor;
-                    else if(elapsed)smooth.value+=(nativeFactor-smooth.value)*(1-std::exp(-static_cast<float>(elapsed)/(1000*GrowSmoothingSeconds)));
-                    smooth.target={entityIndex,identity};smooth.millis=sceneMillis;
-                    resources.grow=GrowFactor(nativeFactor,distance,growFarSize.load(std::memory_order_relaxed),smooth.value);
-                }
-            }
+            // The added size fades to none nearby.
+            if(enlarge&&smoothedFactor>0)
+                resources.grow=GrowFactor(nativeFactor,distance,growFarSize.load(std::memory_order_relaxed),smoothedFactor);
             const auto tenths=static_cast<unsigned>(distance*10+.5f);
             if((features&ShowDistance)&&tenths&&tenths<10000){ // Hidden at 0.0.
                 auto& label=resources.labels.distance;
@@ -652,14 +662,16 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     std::memcpy(input.expansionBase,ExpansionBase,6);std::memcpy(input.expansionCount,ExpansionCount,6);
     std::uint8_t codes[MaxGlyphs];unsigned count=0,nameCount=0;
     if(!ExpandName(input,codes,count,nameCount,icons))return false;
-    std::uint32_t fontData[12]{};
-    if(!ReadBytes(clientBase+native.font,fontData,sizeof(fontData))||fontData[9]!=32||fontData[10]!=142)return false;
-    std::uint32_t table=0;
-    if(!Read(fontData[11],table)||!table)return false;
+    input.font=singleLine&&textTexture?&textFont:nullptr;
+    if(input.font){resources.textures[TextTexture]=textTexture;resources.textOutline=textFont.outline!=0;}
+    std::uint32_t fontData[12]{},table=0;
     const auto loadGlyph=[&](std::uint8_t code){
         if(code==10)return true;
         if(code<32)return false;
+        if(input.font&&code<=text_font::Last)return true;
         auto& g=input.glyphs[code];if(g.valid)return true;
+        if(!table&&(!ReadBytes(clientBase+native.font,fontData,sizeof(fontData))||fontData[9]!=32||fontData[10]!=142
+            ||!Read(fontData[11],table)||!table))return false;
         std::uint32_t shape=0,node=0,part=0;
         if(!Read(table+(code-32)*4,shape)||!shape||!Read(shape+4,node))return false;
         bool found=false;
@@ -832,30 +844,42 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     progress.nativeSafe=false;
     if(!progress.Check(device->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE),"Set ALPHABLENDENABLE")
         ||!progress.Check(device->SetVertexShader(0x144),"SetVertexShader"))return fail();
+    const auto emit=[&](const Quad& q){
+        const bool front=(q.code&nameplate_lab::FrontCode)!=0;
+        if(front!=zFront||q.textureGroup!=group||q.alphaReference!=alpha||batched==BatchQuads){
+            if(!flush()||!setFront(front))return false;
+            if(q.textureGroup!=group){
+                if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture"))return false;
+                group=q.textureGroup;
+            }
+            if(q.alphaReference!=alpha){
+                if(!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,q.alphaReference),"Set ALPHAREF"))return false;
+                alpha=q.alphaReference;
+            }
+        }
+        // Strip 0,1,2,3 draws (0,1,2) then (1,3,2), each led by the same vertex.
+        auto* v=batch+batched++*6;
+        v[0]=q.vertices[0];v[1]=q.vertices[1];v[2]=q.vertices[2];
+        v[3]=q.vertices[1];v[4]=q.vertices[3];v[5]=q.vertices[2];
+        return true;
+    };
+    // Reuse the letter geometry with the atlas's black outline half. Drawing all
+    // outlines first keeps adjacent letters from covering each other's interiors.
+    if(resources.textOutline){
+        for(unsigned i=0;i<output.count;++i){
+            if(output.quads[i].textureGroup!=TextTexture)continue;
+            auto q=output.quads[i];
+            for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
+            if(!emit(q))return fail();
+        }
+        if(!flush())return fail();
+    }
     for(unsigned i=0;i<output.count;++i){
         Quad pieces[2];
         const auto* quads=&output.quads[i];
         unsigned pieceCount=1;
         if(health.enabled&&HealthLetter(*quads)){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
-        for(unsigned piece=0;piece<pieceCount;++piece){
-            const auto& q=quads[piece];
-            const bool front=(q.code&nameplate_lab::FrontCode)!=0;
-            if(front!=zFront||q.textureGroup!=group||q.alphaReference!=alpha||batched==BatchQuads){
-                if(!flush()||!setFront(front))return fail();
-                if(q.textureGroup!=group){
-                    if(!progress.Check(device->SetTexture(0,resources.textures[q.textureGroup]),"SetTexture"))return fail();
-                    group=q.textureGroup;
-                }
-                if(q.alphaReference!=alpha){
-                    if(!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,q.alphaReference),"Set ALPHAREF"))return fail();
-                    alpha=q.alphaReference;
-                }
-            }
-            // Strip 0,1,2,3 draws (0,1,2) then (1,3,2), each led by the same vertex.
-            auto* v=batch+batched++*6;
-            v[0]=q.vertices[0];v[1]=q.vertices[1];v[2]=q.vertices[2];
-            v[3]=q.vertices[1];v[4]=q.vertices[3];v[5]=q.vertices[2];
-        }
+        for(unsigned piece=0;piece<pieceCount;++piece)if(!emit(quads[piece]))return fail();
     }
     if(!flush()||!setFront(false))return fail();
     if(alpha&&!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF"))return finish(false);
@@ -909,6 +933,34 @@ bool InstallDamage() {
     if(!ExchangeSite(DamageOriginal,damagePatch,DamageRva))return false;
     damageHooked=true;return true;
 }
+// Only called at device initialization or between scenes. A failed selection
+// leaves the working font intact; there are no font APIs in the name hook.
+bool LoadTextFont(IDirect3DDevice8* device,const std::filesystem::path& path,unsigned outline,char (&error)[128],const wchar_t* family=L"",bool italic=false,unsigned soften=0) {
+    text_font::Font prepared;
+    if(!prepared.Prepare(path.c_str(),outline,family,italic,soften)){strcpy_s(error,prepared.error);return false;}
+    IDirect3DTexture8* texture=nullptr;
+    auto result=device->CreateTexture(text_font::TextureWidth,text_font::TextureHeight,1,0,
+        D3DFMT_A8R8G8B8,D3DPOOL_MANAGED,&texture);
+    if(SUCCEEDED(result)){
+        D3DLOCKED_RECT lock{};
+        result=texture->LockRect(0,&lock,nullptr,0);
+        if(SUCCEEDED(result)){
+            for(unsigned y=0;y<text_font::TextureHeight;++y)
+                std::memcpy(static_cast<char*>(lock.pBits)+y*lock.Pitch,
+                    prepared.pixels.data()+y*text_font::TextureWidth,text_font::TextureWidth*4);
+            result=texture->UnlockRect(0);
+        }
+    }
+    if(FAILED(result)){
+        if(texture)texture->Release();
+        _snprintf_s(error,sizeof(error),_TRUNCATE,"Font texture upload failed (%08X).",static_cast<unsigned>(result));
+        return false;
+    }
+    std::vector<std::uint32_t>().swap(prepared.pixels);
+    if(textTexture)textTexture->Release();
+    textTexture=texture;textFont=std::move(prepared);error[0]=0;
+    return true;
+}
 class Plugin final:public IPlugin {
     IAshitaCore* core_=nullptr;
     bool owns_=false;
@@ -918,6 +970,23 @@ class Plugin final:public IPlugin {
     ULONGLONG nextSave_=0;
     Options options_{};
     char settingsDirectory_[MAX_PATH]{},settingsPath_[MAX_PATH]{};
+    char fontFile_[1024]{},fontFamily_[128]{},fontError_[128]{};
+    std::vector<std::string> fontFamilies_;
+    int fontOutline_=3,fontSoften_=0;
+    bool fontReset_=false,fontItalic_=false;
+    bool ApplyFont(IDirect3DDevice8* device,const char* file,unsigned outline,const char* family="",bool italic=false,unsigned soften=0) {
+        bool loaded=false;
+        try{
+            auto path=std::filesystem::path(reinterpret_cast<const char8_t*>(file));
+            if(!path.empty()&&path.is_relative())path=std::filesystem::path(settingsDirectory_)/"fonts"/path;
+            wchar_t face[32]{};
+            if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,family,-1,face,32)){
+                strcpy_s(fontError_,"Invalid Windows font family name.");return false;
+            }
+            loaded=LoadTextFont(device,path,outline,fontError_,face,italic,soften);
+        }catch(const std::exception&){strcpy_s(fontError_,"Could not prepare this font file.");}
+        return loaded;
+    }
     void Save(bool force=false) {
         if(!dirty_||(!force&&GetTickCount64()<nextSave_))return;
         std::error_code error;
@@ -1013,8 +1082,8 @@ public:
     }
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
-    const char* GetDescription()const override{return "Reloadable native nameplates with sizing, aspect correction and enemy HP color fill";}
-    double GetVersion()const override{return 0.919;}
+    const char* GetDescription()const override{return "Custom-font nameplates with sizing, native icons and enemy HP color fill";}
+    double GetVersion()const override{return 0.925;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -1024,6 +1093,10 @@ public:
         if(!device)return false;
         traitTextureResult=traitTexture.Initialize(device);
         debuffTextureResult=debuffTexture.Initialize(device,core_?core_->GetResourceManager():nullptr);
+        if(!ApplyFont(device,options_.fontFile,options_.fontOutline,options_.fontFamily,options_.fontItalic,options_.fontSoften)){
+            if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s Using the default font when available.",fontError_);
+            if(options_.fontFile[0]||options_.fontFamily[0])ApplyFont(device,"",options_.fontOutline,"",options_.fontItalic,options_.fontSoften);
+        }
         if(FAILED(traitTextureResult)&&core_)
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Trait artwork unavailable (%08X); names and levels remain available.",static_cast<unsigned>(traitTextureResult));
         return true;
@@ -1051,6 +1124,11 @@ public:
             &&_snprintf_s(settingsPath_,sizeof(settingsPath_),_TRUNCATE,"%s\\settings.ini",settingsDirectory_)>=0)
             options_=LoadOptions(settingsPath_);
         else {settingsPath_[0]=0;saveFailed_=true;}
+        strcpy_s(fontFile_,options_.fontFile);strcpy_s(fontFamily_,options_.fontFamily);fontOutline_=static_cast<int>(options_.fontOutline);fontItalic_=options_.fontItalic;fontSoften_=static_cast<int>(options_.fontSoften);
+        if(settingsDirectory_[0]){
+            std::error_code error;
+            std::filesystem::create_directories(std::filesystem::path(settingsDirectory_)/"fonts",error);
+        }
         cursorAttempted=false;cursorReady=false;cursorDraws=0;cursorClearance[0]={};cursorClearance[1]={};
         damageFault.store(false);nameFault.store(false);damageRetry_=false;
         PublishVisuals(options_);damageHookAttempted=false;
@@ -1083,7 +1161,7 @@ public:
                 reinterpret_cast<LPCWSTR>(&NameplateGate),&retainedModule);
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Unload could not detach safely (%s). Drawing disabled; DLL retained. Restart before replacing it.",lastProblem);
         }
-        if(detached){traitTexture.Release();debuffTexture.Release();}
+        if(detached){traitTexture.Release();debuffTexture.Release();if(textTexture){textTexture->Release();textTexture=nullptr;}}
         debuffs.Clear();
         actions.Clear();
         xpFeed.Clear();
@@ -1096,7 +1174,7 @@ public:
         if(!*option||_stricmp(option,"config")==0){window_=!window_;if(!window_)Save();return true;}
         if(_stricmp(option,"self")==0){SelectMode(1);}
         else if(_stricmp(option,"all")==0){SelectMode(2);}
-        else if(_stricmp(option,"hp")==0){SelectMode(3);}
+        else if(_stricmp(option,"hp")==0){options_.drainRows|=EnemyDrainRows;ChangedVisuals();SelectMode(3);}
         else if(_stricmp(option,"original")==0||_stricmp(option,"off")==0){SelectMode(0);}
         else if(_strnicmp(option,"autocheck ",10)==0){
             const char* setting=option+10;
@@ -1163,7 +1241,7 @@ public:
                 if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Matched original 4:3 proportions for %ux%u: size 100%%, width %.2f%%. HP/display and filtering retained.",reference.screenWidth,reference.screenHeight,options_.width*100);
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cannot calculate 4:3 sizing from the current resolution; settings unchanged.");
         }
-        else if(_stricmp(option,"reset")==0){options_=Options{};cursorAttempted=false;ChangedVisuals();SelectMode(options_.mode);}
+        else if(_stricmp(option,"reset")==0){options_=Options{};fontFile_[0]=fontFamily_[0]=0;fontOutline_=3;fontSoften_=0;fontItalic_=false;fontReset_=true;cursorAttempted=false;ChangedVisuals();SelectMode(options_.mode);}
         else if(_strnicmp(option,"size ",5)==0||_strnicmp(option,"width ",6)==0){
             const bool size=_strnicmp(option,"size ",5)==0;float value=0;
             if(ParseFactor(option+(size?5:6),value)){
@@ -1172,7 +1250,7 @@ public:
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Use a factor from 0.25 to 3, for example /nplab size 1.2 or /nplab width 0.85.");
         }
         else if(_stricmp(option,"status")==0){
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Self":mode.load()==2?"All":mode.load()==3?"All + enemy HP":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
+            core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Self":mode.load()>=2?"All":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Name icons: %s.",options_.showStatusIcons?"detached left":"hidden");
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /nplab damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
@@ -1193,8 +1271,8 @@ public:
             if(gui->BeginTabBar("SettingsTabs")){
             if(gui->BeginTabItem("General")){
             gui->SeparatorText("Nameplates");
-            int selected=static_cast<int>(requested.load());
-            if(gui->Combo("Display",&selected,"Original\0Self only\0All names\0All names + enemy HP\0"))SelectMode(static_cast<unsigned>(selected));
+            int selected=static_cast<int>((std::min)(requested.load(),2u));
+            if(gui->Combo("Display",&selected,"Original\0Self only\0All names\0"))SelectMode(static_cast<unsigned>(selected));
             float size=options_.scale*100,width=options_.width*100;
             if(gui->SliderFloat("Size",&size,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.scale=size/100;changed=true;}
             if(gui->SliderFloat("Width",&width,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.width=width/100;changed=true;}
@@ -1255,9 +1333,42 @@ public:
             if(gui->IsItemHovered())gui->SetTooltip("Readability size at 25 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
             if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
             gui->SeparatorText("Nameplate font");
-            gui->TextUnformatted("Uses the game's loaded font, including XIPivot DATs.");
-            gui->TextUnformatted("Sharp keeps pixel edges; Smooth softens scaling.");
-            gui->TextUnformatted("Size and width also apply to nameplate icons.");
+            const char* selectedFont=fontFamily_[0]?fontFamily_:fontFile_[0]?"Custom font file":"Tahoma (default)";
+            if(gui->BeginCombo("Windows font",selectedFont,ImGuiComboFlags_HeightLarge)){
+                // Enumerate once per opening, never during name drawing or every UI frame.
+                if(gui->IsWindowAppearing())fontFamilies_=text_font::InstalledFamilies();
+                if(gui->Selectable("Tahoma (default)",!fontFamily_[0]&&!fontFile_[0]))fontFamily_[0]=fontFile_[0]=0;
+                for(const auto& family:fontFamilies_){
+                    if(gui->Selectable(family.c_str(),std::strcmp(fontFamily_,family.c_str())==0)){
+                        strcpy_s(fontFamily_,family.c_str());fontFile_[0]=0;
+                    }
+                }
+                gui->EndCombo();
+            }
+            if(gui->IsItemHovered())gui->SetTooltip("Installed Windows font families, using bold weight. Choose one, then Apply font.");
+            if(gui->InputText("Font file",fontFile_,sizeof(fontFile_)))fontFamily_[0]=0;
+            if(gui->IsItemHovered())gui->SetTooltip("A TTF or OTF file in config/nameplatelab/fonts, or a full path. Leave blank for Tahoma Bold.");
+            gui->Checkbox("Italic",&fontItalic_);
+            gui->SliderInt("Outline",&fontOutline_,0,6,"%d",ImGuiSliderFlags_AlwaysClamp);
+            gui->SliderInt("Edge softness",&fontSoften_,0,2,"%d",ImGuiSliderFlags_AlwaysClamp);
+            if(gui->IsItemHovered())gui->SetTooltip("0 is crisp. Higher values soften letter edges slightly so slanted strokes step less after the game scales them. Apply font to see it.");
+            if(gui->Button("Apply font")){
+                if(ApplyFont(core_->GetDirect3DDevice(),fontFile_,static_cast<unsigned>(fontOutline_),fontFamily_,fontItalic_,static_cast<unsigned>(fontSoften_))){
+                    strcpy_s(options_.fontFile,fontFile_);strcpy_s(options_.fontFamily,fontFamily_);options_.fontOutline=static_cast<unsigned>(fontOutline_);options_.fontItalic=fontItalic_;options_.fontSoften=static_cast<unsigned>(fontSoften_);dirty_=true;
+                }
+            }
+            gui->SameLine();
+            if(gui->Button("Default font")){
+                if(ApplyFont(core_->GetDirect3DDevice(),"",3)){
+                    options_.fontFile[0]=fontFile_[0]=options_.fontFamily[0]=fontFamily_[0]=0;options_.fontOutline=3;fontOutline_=3;options_.fontSoften=0;fontSoften_=0;options_.fontItalic=fontItalic_=false;dirty_=true;
+                }
+            }
+            if(textTexture){
+                char face[128]{};WideCharToMultiByte(CP_UTF8,0,textFont.face,-1,face,sizeof(face),nullptr,nullptr);
+                gui->Text("Using: %s",face);
+                if(textFont.substitutions)gui->Text("%u missing characters use Tahoma.",textFont.substitutions);
+            }
+            if(fontError_[0])gui->TextWrapped("%s",fontError_);
             gui->EndTabItem();
             }
             if(gui->BeginTabItem("Details")){
@@ -1268,12 +1379,13 @@ public:
             // One row per category; each name uses the first it matches, except that you keep
             // your own row when targeting yourself.
             static constexpr const char* RowNames[RowCount]={"Target","You","Party/Alliance","Claimed by you",
-                "Claimed by party","Claimed by others","Unclaimed"};
+                "Claimed by party","Claimed by others","Unclaimed","Other players"};
             static constexpr const char* ColumnNames[]={"Show","HP%","TP","MP","Level","Traits","Debuffs","Action","Dist.","Weak","Resist"};
             static constexpr unsigned Columns[]={RowShow,ShowHealth,ShowTp,ShowMp,ShowLevel,ShowTraits,ShowDebuffs,ShowAction,ShowDistance,ShowWeak,ShowResist};
-            if(gui->BeginTable("PlateRows",12,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+            if(gui->BeginTable("PlateRows",13,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
                 gui->TableSetupColumn("");
                 for(const auto* name:ColumnNames)gui->TableSetupColumn(name);
+                gui->TableSetupColumn("HP drain");
                 gui->TableHeadersRow();
                 for(unsigned row=0;row<RowCount;++row){
                     gui->TableNextRow();gui->TableNextColumn();gui->TextUnformatted(RowNames[row]);
@@ -1284,17 +1396,20 @@ public:
                         bool on=(options_.rows[row]&Columns[c])!=0;
                         if(gui->Checkbox(id,&on)){options_.rows[row]^=Columns[c];changed=true;}
                     }
+                    gui->TableNextColumn();
+                    char drainId[16];_snprintf_s(drainId,sizeof(drainId),_TRUNCATE,"##drain%u",row);
+                    bool drain=(options_.drainRows&(1u<<row))!=0;
+                    if(gui->Checkbox(drainId,&drain)){options_.drainRows^=1u<<row;changed=true;}
+                    if(gui->IsItemHovered())gui->SetTooltip("Dims the lost-health portion of the name; independent of the HP%% label. Players also use HP warning colors below 75%%.");
                 }
                 gui->EndTable();
             }
-            gui->TextUnformatted("You, then target, party/alliance, then enemies by claim.");
-            gui->TextUnformatted("Other players show details only while targeted.");
+            gui->TextUnformatted("You, then target, party/alliance, enemies by claim, other players.");
+            gui->TextUnformatted("A targeted player uses Target; untargeted players outside your party use Other players.");
             changed=gui->Checkbox("Apply features to NPCs",&options_.npcFeatures)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Off: targeted NPCs show no HP%%, distance or other details.");
             changed=gui->Checkbox("Unclaimed: only once damaged",&options_.unclaimedDamagedOnly)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Unhurt unclaimed monsters show no details unless targeted.");
-            changed=gui->Checkbox("Deplete your and party/alliance names by HP",&options_.friendlyHealth)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Like monster HP: the lost part dims. Below 75%% the rest takes the HP%% color.");
             gui->SeparatorText("On top");
             if(gui->BeginTable("FrontRows",12,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
                 gui->TableSetupColumn("");
@@ -1359,6 +1474,7 @@ public:
         // Initialize may run on the loading thread. Capture the actual drawing
         // thread before installing hooks, not the device initialization caller.
         if(!renderThread_)renderThread_=GetCurrentThreadId();
+        if(fontReset_&&core_){fontReset_=false;ApplyFont(core_->GetDirect3DDevice(),"",3);}
         RefreshDetailTarget();
         const auto tick=GetTickCount64();
         sceneSeconds=static_cast<std::uint32_t>(tick/1000);sceneMillis=static_cast<std::uint32_t>(tick);
@@ -1405,7 +1521,7 @@ public:
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Original retained: %s.",lastProblem);return;
         }
         mode.store(next,std::memory_order_release);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s enabled. /nplab original switches back.",next==1?"Self recreation":next==3?"Enemy HP coloring":"All-name recreation");
+        core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s enabled. /nplab original switches back.",next==1?"Self recreation":"All-name recreation");
     }
 };
 }

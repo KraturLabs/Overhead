@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+namespace text_font {struct Font;}
 
 namespace nameplate_lab {
 constexpr unsigned MaxGlyphs = 36;
@@ -29,7 +30,7 @@ struct LevelLabel {
     float scale=1; // User factor relative to the existing name size.
     bool reserve=false; // Hold "Lv.00" room while the level is still unknown so details do not shift.
 };
-// Native-font text beside or below the name. Missing glyphs omit only the label.
+// Text beside or below the name. Missing glyphs omit only the label.
 struct TextLabel {
     unsigned length=0;
     char text[MaxLabel+1]{};
@@ -65,6 +66,7 @@ struct Input {
     std::uint32_t nameColor, shellColor;
     std::uint8_t expansionBase[6], expansionCount[6];
     Glyph glyphs[256];
+    const text_font::Font* font=nullptr; // Prepared text; native resources remain for symbols.
 };
 struct Vertex {
     float x, y, z, rhw;
@@ -73,6 +75,7 @@ struct Vertex {
 };
 // Set in Quad::code for quads drawn without the depth test, over world geometry.
 constexpr std::uint32_t FrontCode = 0x10000u;
+constexpr unsigned TextTexture=4;
 struct Quad {
     std::uint32_t code, textureGroup, alphaReference;
     Vertex vertices[4];
@@ -80,6 +83,7 @@ struct Quad {
 struct Output {
     std::uint32_t count;
     Quad quads[MaxQuads];
+    float textInset=0; // Outline padding in name screen units; excluded from HP bounds.
 };
 // Player names: the native formatter's leading icon prefix (its own priority
 // winner plus any stacked second-slot icons) is drawn left of the name, apart
@@ -92,7 +96,7 @@ static_assert(sizeof(Glyph) == 44 && sizeof(Vertex) == 28 && sizeof(Quad) == 124
 // Shared by collection and layout so each needed glyph is read only once.
 bool ExpandName(const Input& input, std::uint8_t (&codes)[MaxGlyphs], unsigned& count,
     unsigned& nameCount, const StatusIcons* icons = nullptr) noexcept;
-// Pure layout: no pointers, graphics calls, allocations, or changes to game state.
+// Pure layout: no native memory reads, graphics calls, allocations, or game-state changes.
 bool Build(const Input& input, Output& output, const StatusIcons* icons = nullptr,
     const LevelLabel* level = nullptr, const TraitLabel* traits = nullptr,
     const DebuffRow* debuffs = nullptr, DebuffBounds* bounds = nullptr,
