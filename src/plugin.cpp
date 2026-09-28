@@ -1307,7 +1307,7 @@ public:
             gui->SeparatorText("Labels");
             float actionSize=options_.actionScale*100;
             if(gui->SliderFloat("Action size",&actionSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.actionScale=actionSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Readies and casts; the result stays 6 seconds: green success, red interrupted/missed/resisted.");
+            if(gui->IsItemHovered())gui->SetTooltip("Readies and casts; the result stays 4 seconds: green success, red interrupted/missed/resisted.");
             if(gui->Button("Reset action size")){options_.actionScale=.6f;changed=true;}
             int iconSize=static_cast<int>(options_.debuffSize);
             if(gui->SliderInt("Debuff icon size",&iconSize,4,24,"%d",ImGuiSliderFlags_AlwaysClamp)){options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;}

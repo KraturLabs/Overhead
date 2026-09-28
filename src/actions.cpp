@@ -4,13 +4,12 @@
 
 namespace nameplate_lab {
 namespace {
-constexpr std::uint32_t LostResultSeconds=30,LingerSeconds=6;
-// Primary result messages (LandSandBoat xi.msg.basic). Anything else stays neutral.
-constexpr std::uint16_t Failures[]={4,5,15,16,17,18,29,30,31,34,35,36,47,48,49,70,71,72,
-    75,76,78,84,85,87,88,106,114,137,153,154,155,156,158,188,189,190,192,283,323,324,655};
-constexpr std::uint16_t Successes[]={2,7,83,93,100,101,102,103,108,109,110,119,123,125,126,
-    127,129,136,142,144,146,147,149,150,151,159,185,186,187,203,205,230,236,237,238,242,
-    252,264,265,266,267,268,269,271,272,277,278,279,280,317,319,320,375,412,645,754,755,802,804};
+constexpr std::uint32_t LostResultSeconds=30,LingerSeconds=4;
+// Failure result messages (LandSandBoat xi.msg.basic, plus Bars' miss/resist/no-effect set).
+// Like Bars, any other finished result counts as success.
+constexpr std::uint16_t Failures[]={4,5,15,16,17,18,29,30,31,32,34,35,36,47,48,49,63,70,71,72,
+    75,76,78,84,85,87,88,106,114,137,153,154,155,156,158,188,189,190,192,244,245,248,282,283,284,
+    323,324,355,408,422,423,425,655,656,658,659};
 template<std::size_t N> bool listed(const std::uint16_t (&list)[N],unsigned message) noexcept {
     for(auto value:list)if(value==message)return true;
     return false;
@@ -43,7 +42,7 @@ void DecodeActions(unsigned packet,const std::uint8_t* data,unsigned size,void* 
     bits.Take(4);const auto category=bits.Take(4),argument=bits.Take(32);bits.Take(32);
     const bool instant=category==6||category==14||category==15;
     if(!targets||!(instant||category==3||category==4||category==7||category==8||category==11))return;
-    unsigned id=0,first=0;bool succeeded=false,failed=false,unknown=false;
+    unsigned id=0,first=0;bool succeeded=false;
     for(unsigned t=0;t<targets;++t){
         bits.Take(32);const auto actions=bits.Take(4);
         if(!actions||actions>8)return; // Same maximum as the client; reject truncated/invalid records.
@@ -53,12 +52,10 @@ void DecodeActions(unsigned packet,const std::uint8_t* data,unsigned size,void* 
             if(bits.Take(1))bits.Take(34);
             if(!bits.valid)return;
             if(!t&&!a){id=value;first=message;}
-            if(listed(Successes,message))succeeded=true;
-            else if(listed(Failures,message))failed=true;
-            else unknown=true;
+            if(!listed(Failures,message))succeeded=true;
         }
     }
-    const unsigned result=succeeded?ActionSuccess:failed&&!unknown?ActionFailure:ActionNeutral;
+    const unsigned result=succeeded?ActionSuccess:ActionFailure;
     // Instant abilities have no ready phase and carry their ID in the header.
     if(instant){if(actor&&actor<0x1000000)sink(context,{actor,ActionChange::Instant,category,argument,result});return;}
     if(category==3||category==4||category==11){sink(context,{actor,ActionChange::Finish,category,0,result});return;}
