@@ -28,8 +28,7 @@ struct Appearance {
     bool showStatusIcons = true;
 };
 struct Options : Appearance {
-    char fontFile[1024]{}; // UTF-8; relative to config/nameplatelab/fonts. Empty = Tahoma Bold.
-    char fontFamily[128]{}; // UTF-8 installed Windows family; when set, takes precedence over the file.
+    char fontFamily[128]{}; // UTF-8 installed Windows family. Empty = Tahoma Bold.
     unsigned fontOutline=3;
     bool fontItalic=false;
     unsigned fontSoften=0; // 0 crisp; 1-2 blur the font texture slightly (setup only).

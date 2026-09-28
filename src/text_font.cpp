@@ -1,7 +1,5 @@
 #define NOMINMAX
 #include <Windows.h>
-#include <dwrite.h>
-#include <wrl/client.h>
 #include "text_font.h"
 #include <algorithm>
 #include <cmath>
@@ -9,36 +7,17 @@
 
 namespace text_font {
 namespace {
-// Setup-only handles. RAII also releases private fonts if bitmap allocation fails.
+// Setup-only GDI handles, released on every exit path.
 struct Preparation {
     HDC dc=CreateCompatibleDC(nullptr);
     HFONT selected=nullptr,fallback=nullptr;
     HGDIOBJ prior=dc?GetCurrentObject(dc,OBJ_FONT):nullptr;
-    const wchar_t* registered=nullptr;
     ~Preparation(){
         if(dc){SelectObject(dc,prior);DeleteDC(dc);}
         if(selected)DeleteObject(selected);
         if(fallback)DeleteObject(fallback);
-        if(registered)RemoveFontResourceExW(registered,FR_PRIVATE,nullptr);
     }
 };
-bool FileDescription(const wchar_t* path,LOGFONTW& description) {
-    // Let Windows read TTF/OTF metadata; no custom font-file parser. DirectWrite
-    // is used only here to get the file's face/style, not during name drawing.
-    using Microsoft::WRL::ComPtr;
-    ComPtr<IDWriteFactory> factory;
-    ComPtr<IDWriteFontFile> file;
-    ComPtr<IDWriteFontFace> face;
-    ComPtr<IDWriteGdiInterop> interop;
-    BOOL supported=FALSE;DWRITE_FONT_FILE_TYPE fileType{};DWRITE_FONT_FACE_TYPE faceType{};UINT32 faces=0;
-    return SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED,__uuidof(IDWriteFactory),
-            reinterpret_cast<IUnknown**>(factory.GetAddressOf())))
-        &&SUCCEEDED(factory->CreateFontFileReference(path,nullptr,&file))
-        &&SUCCEEDED(file->Analyze(&supported,&fileType,&faceType,&faces))&&supported&&faces==1
-        &&SUCCEEDED(factory->CreateFontFace(faceType,1,file.GetAddressOf(),0,DWRITE_FONT_SIMULATIONS_NONE,&face))
-        &&SUCCEEDED(factory->GetGdiInterop(&interop))
-        &&SUCCEEDED(interop->ConvertFontFaceToLOGFONT(face.Get(),&description));
-}
 int CALLBACK CollectFamily(const LOGFONTW* font,const TEXTMETRICW*,DWORD type,LPARAM context) {
     if((type&RASTER_FONTTYPE)||font->lfFaceName[0]==L'@')return 1;
     char name[128]{};
@@ -57,7 +36,7 @@ std::vector<std::string> InstalledFamilies() {
     families.erase(std::unique(families.begin(),families.end()),families.end());
     return families;
 }
-bool Font::Prepare(const wchar_t* path,unsigned border,const wchar_t* family,bool italic,unsigned soften) {
+bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned soften) {
     error[0]=0;substitutions=0;outline=border;spill=soften?1u:0u;
     std::memset(substituted,0,sizeof(substituted));
     const auto fail=[&](const char* message){strcpy_s(error,message);return false;};
@@ -70,10 +49,6 @@ bool Font::Prepare(const wchar_t* path,unsigned border,const wchar_t* family,boo
     if(family&&*family){
         if(std::wcslen(family)>=LF_FACESIZE)return fail("The Windows font family name is too long.");
         wcscpy_s(description.lfFaceName,family);
-    }else if(path&&*path){
-        if(!FileDescription(path,description))return fail("Cannot read this font. Select a single-face TTF or OTF file.");
-        if(!AddFontResourceExW(path,FR_PRIVATE,nullptr))return fail("Windows could not load this font file.");
-        setup.registered=path;
     }
     if(italic)description.lfItalic=TRUE;
     description.lfHeight=-48;description.lfWidth=0;
@@ -188,6 +163,7 @@ bool Font::Prepare(const wchar_t* path,unsigned border,const wchar_t* family,boo
         }
         for(unsigned y=0;y<ch;++y)for(unsigned x=0;x<cw;++x){
             const unsigned a=(cover[y*cw+x]*255u+coverageScale/2)/coverageScale;
+            if(!a)continue; // Already transparent, and adds nothing to the outline.
             const auto px=g.x+x+border,py=g.y+y+border;
             pixels[py*TextureWidth+px]=(a<<24)|0xFFFFFFu;
             // Once per selected font: circular dilation builds the black outline's alpha mask.

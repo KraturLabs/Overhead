@@ -95,7 +95,6 @@ Options LoadOptions(const char* path) noexcept {
         return result.ec==std::errc{}&&result.ptr==end&&parsed<=limit?parsed:fallback;
     };
     out.correctAspect=readChoice("CorrectAspect",0,1)!=0;
-    GetPrivateProfileStringA("Nameplates","FontFile","",out.fontFile,sizeof(out.fontFile),path);
     GetPrivateProfileStringA("Nameplates","FontFamily","",out.fontFamily,sizeof(out.fontFamily),path);
     out.fontOutline=readChoice("FontOutline",3,6);
     out.fontItalic=readChoice("FontItalic",0,1)!=0;
@@ -182,13 +181,13 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||as.ec!=std::errc{}||ws.ec!=std::errc{}||rs.ec!=std::errc{}||ts.ec!=std::errc{}||gm.ec!=std::errc{})return false;
     char content[3072]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nTraitScale=%s\r\nFontFile=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nTraitScale=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
         value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.drainRows,actionScale,value.scrollXp?1u:0u,
         value.growTarget?1u:0u,growFarSize,value.front[0],value.front[1],value.front[2],value.front[3],
-        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontFile,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften);
+        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

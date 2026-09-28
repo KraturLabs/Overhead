@@ -52,7 +52,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
-constexpr char Version[]="0.9.30";
+constexpr char Version[]="0.9.31";
 text_font::Font textFont;
 IDirect3DTexture8* textTexture=nullptr;
 // Native icon expansion tables; setup requires exactly these values before any hook.
@@ -863,8 +863,9 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         v[3]=q.vertices[1];v[4]=q.vertices[3];v[5]=q.vertices[2];
         return true;
     };
-    // Reuse the letter geometry with the atlas's black outline half. Drawing all
-    // outlines first keeps adjacent letters from covering each other's interiors.
+    // Reuse the letter geometry with the atlas's black outline half. All outlines
+    // go first, so adjacent letters never cover each other's interiors; they share
+    // a submission with the letters that follow whenever the draw state matches.
     if(resources.textOutline){
         for(unsigned i=0;i<output.count;++i){
             if(output.quads[i].textureGroup!=TextTexture)continue;
@@ -872,7 +873,6 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
             for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
             if(!emit(q))return fail();
         }
-        if(!flush())return fail();
     }
     for(unsigned i=0;i<output.count;++i){
         Quad pieces[2];
@@ -935,9 +935,9 @@ bool InstallDamage() {
 }
 // Only called at device initialization or between scenes. A failed selection
 // leaves the working font intact; there are no font APIs in the name hook.
-bool LoadTextFont(IDirect3DDevice8* device,const std::filesystem::path& path,unsigned outline,char (&error)[128],const wchar_t* family=L"",bool italic=false,unsigned soften=0) {
+bool LoadTextFont(IDirect3DDevice8* device,unsigned outline,char (&error)[128],const wchar_t* family=L"",bool italic=false,unsigned soften=0) {
     text_font::Font prepared;
-    if(!prepared.Prepare(path.c_str(),outline,family,italic,soften)){strcpy_s(error,prepared.error);return false;}
+    if(!prepared.Prepare(outline,family,italic,soften)){strcpy_s(error,prepared.error);return false;}
     IDirect3DTexture8* texture=nullptr;
     auto result=device->CreateTexture(text_font::TextureWidth,text_font::TextureHeight,1,0,
         D3DFMT_A8R8G8B8,D3DPOOL_MANAGED,&texture);
@@ -970,22 +970,18 @@ class Plugin final:public IPlugin {
     ULONGLONG nextSave_=0;
     Options options_{};
     char settingsDirectory_[MAX_PATH]{},settingsPath_[MAX_PATH]{};
-    char fontFile_[1024]{},fontFamily_[128]{},fontError_[128]{};
+    char fontFamily_[128]{},fontError_[128]{};
     std::vector<std::string> fontFamilies_;
     int fontOutline_=3,fontSoften_=0;
     bool fontReset_=false,fontItalic_=false;
-    bool ApplyFont(IDirect3DDevice8* device,const char* file,unsigned outline,const char* family="",bool italic=false,unsigned soften=0) {
-        bool loaded=false;
-        try{
-            auto path=std::filesystem::path(reinterpret_cast<const char8_t*>(file));
-            if(!path.empty()&&path.is_relative())path=std::filesystem::path(settingsDirectory_)/"fonts"/path;
-            wchar_t face[32]{};
-            if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,family,-1,face,32)){
-                strcpy_s(fontError_,"Invalid Windows font family name.");return false;
-            }
-            loaded=LoadTextFont(device,path,outline,fontError_,face,italic,soften);
-        }catch(const std::exception&){strcpy_s(fontError_,"Could not prepare this font file.");}
-        return loaded;
+    bool ApplyFont(IDirect3DDevice8* device,unsigned outline,const char* family="",bool italic=false,unsigned soften=0) {
+        wchar_t face[32]{};
+        if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,family,-1,face,32)){
+            strcpy_s(fontError_,"Invalid Windows font family name.");return false;
+        }
+        // Preparation allocates the 2 MB atlas; never let a failure escape into the game.
+        try{return LoadTextFont(device,outline,fontError_,face,italic,soften);}
+        catch(const std::exception&){strcpy_s(fontError_,"Not enough memory to prepare this font.");return false;}
     }
     void Save(bool force=false) {
         if(!dirty_||(!force&&GetTickCount64()<nextSave_))return;
@@ -1093,9 +1089,9 @@ public:
         if(!device)return false;
         traitTextureResult=traitTexture.Initialize(device);
         debuffTextureResult=debuffTexture.Initialize(device,core_?core_->GetResourceManager():nullptr);
-        if(!ApplyFont(device,options_.fontFile,options_.fontOutline,options_.fontFamily,options_.fontItalic,options_.fontSoften)){
+        if(!ApplyFont(device,options_.fontOutline,options_.fontFamily,options_.fontItalic,options_.fontSoften)){
             if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s Using the default font when available.",fontError_);
-            if(options_.fontFile[0]||options_.fontFamily[0])ApplyFont(device,"",options_.fontOutline,"",options_.fontItalic,options_.fontSoften);
+            if(options_.fontFamily[0])ApplyFont(device,options_.fontOutline,"",options_.fontItalic,options_.fontSoften);
         }
         if(FAILED(traitTextureResult)&&core_)
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Trait artwork unavailable (%08X); names and levels remain available.",static_cast<unsigned>(traitTextureResult));
@@ -1124,11 +1120,7 @@ public:
             &&_snprintf_s(settingsPath_,sizeof(settingsPath_),_TRUNCATE,"%s\\settings.ini",settingsDirectory_)>=0)
             options_=LoadOptions(settingsPath_);
         else {settingsPath_[0]=0;saveFailed_=true;}
-        strcpy_s(fontFile_,options_.fontFile);strcpy_s(fontFamily_,options_.fontFamily);fontOutline_=static_cast<int>(options_.fontOutline);fontItalic_=options_.fontItalic;fontSoften_=static_cast<int>(options_.fontSoften);
-        if(settingsDirectory_[0]){
-            std::error_code error;
-            std::filesystem::create_directories(std::filesystem::path(settingsDirectory_)/"fonts",error);
-        }
+        strcpy_s(fontFamily_,options_.fontFamily);fontOutline_=static_cast<int>(options_.fontOutline);fontItalic_=options_.fontItalic;fontSoften_=static_cast<int>(options_.fontSoften);
         cursorAttempted=false;cursorReady=false;cursorDraws=0;cursorClearance[0]={};cursorClearance[1]={};
         damageFault.store(false);nameFault.store(false);damageRetry_=false;
         PublishVisuals(options_);damageHookAttempted=false;
@@ -1241,7 +1233,7 @@ public:
                 if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Matched original 4:3 proportions for %ux%u: size 100%%, width %.2f%%. HP/display and filtering retained.",reference.screenWidth,reference.screenHeight,options_.width*100);
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cannot calculate 4:3 sizing from the current resolution; settings unchanged.");
         }
-        else if(_stricmp(option,"reset")==0){options_=Options{};fontFile_[0]=fontFamily_[0]=0;fontOutline_=3;fontSoften_=0;fontItalic_=false;fontReset_=true;cursorAttempted=false;ChangedVisuals();SelectMode(options_.mode);}
+        else if(_stricmp(option,"reset")==0){options_=Options{};fontFamily_[0]=0;fontOutline_=3;fontSoften_=0;fontItalic_=false;fontReset_=true;cursorAttempted=false;ChangedVisuals();SelectMode(options_.mode);}
         else if(_strnicmp(option,"size ",5)==0||_strnicmp(option,"width ",6)==0){
             const bool size=_strnicmp(option,"size ",5)==0;float value=0;
             if(ParseFactor(option+(size?5:6),value)){
@@ -1333,34 +1325,32 @@ public:
             if(gui->IsItemHovered())gui->SetTooltip("Readability size at 25 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
             if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
             gui->SeparatorText("Nameplate font");
-            const char* selectedFont=fontFamily_[0]?fontFamily_:fontFile_[0]?"Custom font file":"Tahoma (default)";
+            const char* selectedFont=fontFamily_[0]?fontFamily_:"Tahoma (default)";
             if(gui->BeginCombo("Windows font",selectedFont,ImGuiComboFlags_HeightLarge)){
                 // Enumerate once per opening, never during name drawing or every UI frame.
                 if(gui->IsWindowAppearing())fontFamilies_=text_font::InstalledFamilies();
-                if(gui->Selectable("Tahoma (default)",!fontFamily_[0]&&!fontFile_[0]))fontFamily_[0]=fontFile_[0]=0;
+                if(gui->Selectable("Tahoma (default)",!fontFamily_[0]))fontFamily_[0]=0;
                 for(const auto& family:fontFamilies_){
                     if(gui->Selectable(family.c_str(),std::strcmp(fontFamily_,family.c_str())==0)){
-                        strcpy_s(fontFamily_,family.c_str());fontFile_[0]=0;
+                        strcpy_s(fontFamily_,family.c_str());
                     }
                 }
                 gui->EndCombo();
             }
             if(gui->IsItemHovered())gui->SetTooltip("Installed Windows font families, using bold weight. Choose one, then Apply font.");
-            if(gui->InputText("Font file",fontFile_,sizeof(fontFile_)))fontFamily_[0]=0;
-            if(gui->IsItemHovered())gui->SetTooltip("A TTF or OTF file in config/nameplatelab/fonts, or a full path. Leave blank for Tahoma Bold.");
             gui->Checkbox("Italic",&fontItalic_);
             gui->SliderInt("Outline",&fontOutline_,0,6,"%d",ImGuiSliderFlags_AlwaysClamp);
             gui->SliderInt("Edge softness",&fontSoften_,0,2,"%d",ImGuiSliderFlags_AlwaysClamp);
             if(gui->IsItemHovered())gui->SetTooltip("0 is crisp. Higher values soften letter edges slightly so slanted strokes step less after the game scales them. Apply font to see it.");
             if(gui->Button("Apply font")){
-                if(ApplyFont(core_->GetDirect3DDevice(),fontFile_,static_cast<unsigned>(fontOutline_),fontFamily_,fontItalic_,static_cast<unsigned>(fontSoften_))){
-                    strcpy_s(options_.fontFile,fontFile_);strcpy_s(options_.fontFamily,fontFamily_);options_.fontOutline=static_cast<unsigned>(fontOutline_);options_.fontItalic=fontItalic_;options_.fontSoften=static_cast<unsigned>(fontSoften_);dirty_=true;
+                if(ApplyFont(core_->GetDirect3DDevice(),static_cast<unsigned>(fontOutline_),fontFamily_,fontItalic_,static_cast<unsigned>(fontSoften_))){
+                    strcpy_s(options_.fontFamily,fontFamily_);options_.fontOutline=static_cast<unsigned>(fontOutline_);options_.fontItalic=fontItalic_;options_.fontSoften=static_cast<unsigned>(fontSoften_);dirty_=true;
                 }
             }
             gui->SameLine();
             if(gui->Button("Default font")){
-                if(ApplyFont(core_->GetDirect3DDevice(),"",3)){
-                    options_.fontFile[0]=fontFile_[0]=options_.fontFamily[0]=fontFamily_[0]=0;options_.fontOutline=3;fontOutline_=3;options_.fontSoften=0;fontSoften_=0;options_.fontItalic=fontItalic_=false;dirty_=true;
+                if(ApplyFont(core_->GetDirect3DDevice(),3)){
+                    options_.fontFamily[0]=fontFamily_[0]=0;options_.fontOutline=3;fontOutline_=3;options_.fontSoften=0;fontSoften_=0;options_.fontItalic=fontItalic_=false;dirty_=true;
                 }
             }
             if(textTexture){
@@ -1474,7 +1464,7 @@ public:
         // Initialize may run on the loading thread. Capture the actual drawing
         // thread before installing hooks, not the device initialization caller.
         if(!renderThread_)renderThread_=GetCurrentThreadId();
-        if(fontReset_&&core_){fontReset_=false;ApplyFont(core_->GetDirect3DDevice(),"",3);}
+        if(fontReset_&&core_){fontReset_=false;ApplyFont(core_->GetDirect3DDevice(),3);}
         RefreshDetailTarget();
         const auto tick=GetTickCount64();
         sceneSeconds=static_cast<std::uint32_t>(tick/1000);sceneMillis=static_cast<std::uint32_t>(tick);

@@ -24,10 +24,8 @@ struct Font {
     wchar_t face[32]{};
     char error[128]{};
     std::vector<std::uint32_t> pixels; // Setup/upload only; released after upload.
-    // An installed family uses bold weight; otherwise an empty path selects Tahoma Bold.
-    // File resources are private and
-    // released after preparing the atlas; no installed-font changes or live lookups.
+    // An installed family in bold weight; empty selects Tahoma Bold. No live lookups.
     // Soften 1-2 blurs coverage slightly so the game's resampling steps slanted edges less.
-    bool Prepare(const wchar_t* path=L"",unsigned border=3,const wchar_t* family=L"",bool italic=false,unsigned soften=0);
+    bool Prepare(unsigned border=3,const wchar_t* family=L"",bool italic=false,unsigned soften=0);
 };
 }

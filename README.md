@@ -1,10 +1,10 @@
 # NameplateLab
 
-An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.30**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
+An experimental Ashita 4.30 plugin for FFXI overhead names and damage numbers. Current source version: **0.9.31**, a single unloadable DLL. Finds native routines and globals at load time. Discovery is verified offline against the Phoenix, local test-client and Horizon builds. The same 0.9.7 DLL is user-confirmed working on Phoenix and Horizon; local live testing remains pending because that client cannot start.
 
 ## Features
 
-- Custom TTF/OTF lettering with a black outline, retaining native name colors, depth, placement and optional HP coloring. Tahoma Bold is the default.
+- Custom lettering from an installed Windows font with a black outline, retaining native name colors, depth, placement and optional HP coloring. Tahoma Bold is the default.
 - Player name icons kept apart from the name: whatever status icons the game shows beside a player name (seeking party, bazaar, linkshell, away, GM, mentor, new adventurer, campaign, PvP and others) are drawn just left of it, using the game's own priority, stacking, size and linkshell tint. They no longer count toward the name's centering, so the name and cursor center on the name alone. A checkbox shows or hides them.
 - Independent Size and Width controls for names and damage numbers.
 - **Match original 4:3** presets apply the complete correction through Width while retaining native height. Size and Width remain manually adjustable; there are no separate stretch toggles. Existing saved legacy correction settings retain their appearance until a preset or reset is selected. The damage preset is available immediately when display dimensions are available; selecting it enables damage adjustments.
@@ -57,7 +57,7 @@ The settings window has General and Details tabs. General contains names, font s
 
 In **General > Nameplate font**, select an installed family from **Windows font**, choose **Italic**, Outline (0-6) and **Edge softness** (0-2), and click **Apply font**. Edge softness 0 is crisp; 1-2 slightly blur the prepared letters so slanted (italic) strokes step less after the game scales its scene. It is applied once when the font is prepared and costs nothing per frame. The alphabetized list refreshes when opened; families use bold weight. The choice saves with your other settings.
 
-Alternatively, enter a single-face `.ttf` or `.otf` filename from `config/nameplatelab/fonts` (created on load), or a full path, choose Outline (0-6), then click **Apply font**. Leave the filename blank for Tahoma Bold; **Default font** also resets its outline. Use the existing Size and Width controls for sizing. Successful choices save with the other settings. A failed selection leaves the current font intact; a missing saved file uses Tahoma for the session when available.
+**Default font** returns to Tahoma Bold and resets the outline and softness. Use the existing Size and Width controls for sizing. Successful choices save with the other settings. A failed selection leaves the current font intact; a saved family that is no longer installed uses Tahoma for the session. To use a font file, install it in Windows first.
 
 Names and detail text share one prepared font texture. Missing printable ASCII characters use Tahoma in the same texture. Name letters follow the game's name fade, but alpha above the native neutral (0x80) is capped: the game doubles vertex alpha, and beyond neutral that only turned partial edge pixels solid, which stepped italic strokes. Game status symbols retain their native artwork and detached placement; unusual multiline names use native lettering. There is no general Unicode shaping or font-collection support. Font preparation runs only on load or an explicit appearance change; the existing name hook, feature tracking and batched drawing handle rendering. Keep FontProof unloaded while using NameplateLab.
 
