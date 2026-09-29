@@ -263,7 +263,9 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         if(shown){
             const auto first=out.count;
             detailLeft=std::min(detailLeft,write(level->text,Prefix,0x808080u,level->scale*PrefixSize,labelPen,0));
-            write(level->text+Prefix,level->length-Prefix,0x808080u,level->scale,labelPen+prefixWidth*PrefixSize*level->scale,0);
+            // The number sits a little right of "Lv." (fixed, in name units).
+            constexpr float NumberGap=.7f;
+            write(level->text+Prefix,level->length-Prefix,0x808080u,level->scale,labelPen+prefixWidth*PrefixSize*level->scale+NumberGap,0);
             if(level->checkLength&&level->checkLength<=3&&nameSeen){
                 // Check rank centered over the small "Lv.", sitting on its top, number color.
                 // Sized 75% past the room below the name's top (at most 80% of the level size);
@@ -290,8 +292,10 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                     const float height=checkBase-checkTop;
                     const float size=height>0?std::min(level->scale*.8f,1.75f*(bottom-nameTop)/height):0;
                     if(size>0){
-                        const float checkPen=labelPen+(prefixWidth*PrefixSize*level->scale-checkWidth*size)/2;
-                        detailLeft=std::min(detailLeft,write(level->check,level->checkLength,level->color,size,checkPen,bottom-checkBase));
+                        // Tuned in game: a little right of centre and up (name units).
+                        constexpr float CheckX=.6f,CheckY=-.8f;
+                        const float checkPen=labelPen+(prefixWidth*PrefixSize*level->scale-checkWidth*size)/2+CheckX;
+                        detailLeft=std::min(detailLeft,write(level->check,level->checkLength,level->color,size,checkPen,bottom-checkBase+CheckY));
                     }
                 }
             }
@@ -313,6 +317,8 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     // Column slots in name heights from the name's middle: three values at 35% with 3% gaps,
     // two at 46.5%, both centred 5% below the middle; a lone value sits on the baseline at 60%.
     constexpr float RowGap=.03f,Offset=.05f,Three=.35f,Two=.465f,Single=.6f;
+    // Extra space between stacked rows, in name units (tuned in game across fonts).
+    constexpr float TwoRowSpace=.3f,ThreeRowSpace=.2f;
     if(labels&&nameCount&&available(32)){
         // Weaknesses/resistances, HP%, MP, TP then distance follow the name's advance; the action
         // overlaps its lower right corner. None shift the name, level, traits or cursor.
@@ -331,7 +337,8 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             const float height=static_cast<float>(textHeight);
             const float middle=textTop+height*.5f;
             const bool both=labels->weak&&labels->resist;
-            float top=Offset-(2*Two+RowGap)*.5f,column=0;
+            const float rowGap=RowGap+(height>0?TwoRowSpace/height:0);
+            float top=Offset-(2*Two+rowGap)*.5f,column=0;
             const struct{std::uint16_t mask;float scale;std::uint32_t tint;unsigned bit;} sets[2]={
                 {labels->weak,labels->weakScale,0x3C6C3Cu,ShowWeak},{labels->resist,labels->resistScale,0x6C3C3Cu,ShowResist}};
             for(const auto& set:sets){
@@ -353,7 +360,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 }
                 column=std::max(column,(iconPen-iconGap-next)*ratio);
                 mark(first,set.bit);
-                top+=Two+RowGap;
+                top+=Two+rowGap;
             }
             next+=column+space*.5f; // HP/MP/TP follow half a space after.
         }
@@ -369,14 +376,15 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 if(row.label->length<=4&&measure(row.label->text,row.label->length,widths[rowCount])){
                     present[rowCount]=row.label;bits[rowCount++]=row.bit;
                 }
-            float top=Offset-(rowCount==2?2*Two+RowGap:3*Three+2*RowGap)*.5f,column=0; // Name heights from the name's middle.
+            const float rowGap=RowGap+(height>0?(rowCount==2?TwoRowSpace:rowCount==3?ThreeRowSpace:0)/height:0);
+            float top=Offset-(rowCount==2?2*Two+rowGap:3*Three+2*rowGap)*.5f,column=0; // Name heights from the name's middle.
             for(unsigned i=0;i<rowCount;++i){
                 const float size=rowCount==1?Single:rowCount==2?Two:Three;
                 const auto first=out.count;
                 write(present[i]->text,present[i]->length,present[i]->color,size,next,rowCount==1?0:(top+size-.5f)*height);
                 mark(first,bits[i]);
                 column=std::max(column,widths[i]*size);
-                top+=size+RowGap;
+                top+=size+rowGap;
             }
             if(column>0)next+=column+space*.5f; // Distance follows half a space after the column.
         }
