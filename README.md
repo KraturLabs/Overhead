@@ -93,7 +93,7 @@ The monster data in `src/trait_data.inc` and `src/trait_atlas.inc` is already ge
 
 Monster aggro, weakness and resistance data and seven aggro icons come from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330) under the [MIT license](licenses/MobDB.txt). The DLL also embeds that license notice.
 
-Some debuff and action behavior follows ideas from two addons. [XIUI](https://github.com/tirem/XIUI) by tirem is the source for base spell durations and for handling immune and no-effect messages. Bars by Key (Keylesta) is the source for clearing Bind and Sleep when a monster moves, and for the action result colors. No code from either is included.
+Some debuff and action behavior follows ideas from two addons. [XIUI](https://github.com/tirem/XIUI) by tirem is the source for base spell durations and for handling immune and no-effect messages. [Bars](https://github.com/iLVL-Key/FFXI/tree/main) by Key (Keylesta) is the source for clearing Bind and Sleep when a monster moves, and for the action result colors. No code from either is included.
 
 ## License
 
