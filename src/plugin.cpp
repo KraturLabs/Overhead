@@ -1184,7 +1184,6 @@ public:
         damageAdjusted.store(0);damageRejected.store(0);
         mode.store(0);requested.store(options_.mode);
         replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.",Version);
         return true;
     }
     void Release()override{
@@ -1665,7 +1664,6 @@ public:
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Original retained: %s.",lastProblem);return;
         }
         mode.store(next,std::memory_order_release);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s enabled. /nplab original switches back.",next==1?"Game font":"Custom font");
     }
 };
 }
