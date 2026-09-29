@@ -134,15 +134,25 @@ XpFeed xpFeed;
 std::atomic<bool> scrollXp{false};
 std::atomic<bool> growTarget{false};
 std::atomic<float> growFarSize{1};
-// Each entity's native size factor, low-passed on the draw thread (see Collect).
+// Each entity's native size factor with step flicker removed, on the draw thread (see
+// Collect). Native 0x830C0 returns (4100-depth)/80 for an integer 0..4096 depth, so
+// the factor moves in 1/80 steps and flickers between neighbours at a boundary. The
+// held value never trails the live factor by more than a band just over one step,
+// so camera turns follow at once, and inside the band it glides toward the live
+// value at one step per 0.3 s, so walking steps and flicker never jump.
+// (A plain time low-pass made names visibly lag camera turns.)
 struct SizeSmoothing { std::uint32_t id=0,millis=0;float value=0; } sizeSmoothing[0x900];
-constexpr float SizeSmoothingSeconds=.4f;
+constexpr float SizeStepBand=1.5f/80,SizeGlidePerMilli=1.f/80/300;
 float SmoothedSize(std::uint16_t index,std::uint32_t identity,float live) noexcept {
     auto& smooth=sizeSmoothing[index];
     const auto elapsed=sceneMillis-smooth.millis;
     // A new entity at this index or a long gap starts from the live value.
     if(smooth.id!=identity||!(smooth.value>0)||elapsed>1000)smooth.value=live;
-    else if(elapsed)smooth.value+=(live-smooth.value)*(1-std::exp(-static_cast<float>(elapsed)/(1000*SizeSmoothingSeconds)));
+    else{
+        const float glide=SizeGlidePerMilli*static_cast<float>(elapsed);
+        smooth.value+=(std::max)(-glide,(std::min)(glide,live-smooth.value));
+        smooth.value=(std::min)(live+SizeStepBand,(std::max)(live-SizeStepBand,smooth.value));
+    }
     smooth.id=identity;smooth.millis=sceneMillis;
     return smooth.value;
 }
