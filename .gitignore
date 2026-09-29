@@ -1,7 +1,7 @@
 /build/
 /dependencies/
-/runtime/
 /.venv/
+/src/native_signatures.h
 /src/client_profile.h
 __pycache__/
 *.pyc
