@@ -25,7 +25,7 @@ LevelLabel Levels::Label(unsigned index,std::uint32_t id) const noexcept {
     // Too weak, incredibly easy prey, easy prey, decent, even, tough, very tough, incredibly tough.
     constexpr std::uint32_t colors[]={0xA0A0A0,0x40E040,0x40D0E0,0x6080FF,0xFFFF40,0xFFA040,0xFF4040,0xFF4040};
     constexpr const char* checks[]={"TW","IEP","EP","DC","EM","T","VT","IT"};
-    if(level==256)label.color=0xFF40FF;
+    if(level==256){label.color=0xFF40FF;label.checkLength=2;std::memcpy(label.check,"NM",2);}
     else if(level){
         const auto rank=static_cast<unsigned>(value>>48)-64;
         label.color=colors[rank];
