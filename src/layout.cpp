@@ -11,6 +11,8 @@ namespace {
 // Pinned corner icons, local name units (letters' capitals are 8).
 constexpr float PinnedIconHeight = 9;
 constexpr float PinnedOffsetX = -2.5f; // Centre left of the name's edge (user-tuned).
+// 100% aggro, weakness and resistance icons: 80% of the name height.
+constexpr float Icon = .8f;
 bool finite(float value) noexcept { return std::isfinite(value); }
 float rounded(double value) noexcept { return static_cast<float>(value); }
 bool validGlyph(const Glyph& g) noexcept {
@@ -225,8 +227,8 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             auto& q=out.quads[out.count++];q.code=(icons->pinOnTop?0u:UnderCode)|code;q.textureGroup=g.textureGroup;q.alphaReference=0x60u;
             for(unsigned v=0;v<4;++v)q.vertices[v]={in.x+in.scaleX*(v&1?right:left),in.y+in.scaleY*(v&2?bottom:top),in.z,1,color,g.uv[v*2],g.uv[v*2+1]};
         };
-        if(icons->linkshell)pin(LinkshellGlyph,nameLeft+PinnedOffsetX,nameTop,icons->linkshellColor);
-        if(icons->bazaar)pin(BazaarGlyph,nameLeft+PinnedOffsetX,nameBottom,0x80808080u);
+        if(icons->linkshell)pin(LinkshellGlyph,nameLeft+PinnedOffsetX+icons->linkshellX*ratio,nameTop+icons->linkshellY,icons->linkshellColor);
+        if(icons->bazaar)pin(BazaarGlyph,nameLeft+PinnedOffsetX+icons->bazaarX*ratio,nameBottom+icons->bazaarY,0x80808080u);
     }
     if(iconCount||pinned)iconEnd=out.count;
     mark(0,RowShow);
@@ -372,10 +374,10 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             for(const auto& set:sets){
                 if(!set.mask)continue;
                 const auto first=out.count;
-                const float size=(both?Two:labels->traitScale)*height*set.scale;
+                const float size=(both?Two:Icon)*height*set.scale;
                 const float y=both?middle+(top+Two*.5f)*height-size*.5f:middle-size*.5f;
                 const float barHeight=both?size:height*.5625f,barY=both?y:middle-barHeight*.5f+height*.05f;
-                const float iconGap=both?size*.1f:2*labels->traitScale*set.scale;
+                const float iconGap=both?size*.1f:2*Icon*set.scale;
                 // Half-intensity tints under native 2x modulation, like the aggression bar.
                 // Icon widths and gaps follow the icon ratio from the bar's left edge.
                 atlasQuad(next,barY-.5f,2*ratio,barHeight+1,7,DetailAlpha);
@@ -453,7 +455,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         }
     }
     if(traits&&traits->bits&&textReference&&available(32)){
-        const float size=textHeight*traits->scale;
+        const float size=textHeight*Icon*traits->scale;
         const float top=textTop+(textHeight-size)*.5f;
         float right=detailLeft-glyphAdvance(32);
         const auto alpha=DetailAlpha;
@@ -477,7 +479,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             if(!(traits->bits&(1u<<flag)))continue;
             // Match native neutral RGB under doubled color modulation.
             quad(right-size,top,size,size,static_cast<unsigned>(flag),alpha|0x808080u);
-            right-=size+2*traits->scale;
+            right-=size+2*Icon*traits->scale;
         }
         mark(first,ShowTraits);
     }

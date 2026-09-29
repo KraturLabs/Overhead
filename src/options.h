@@ -44,7 +44,8 @@ struct Options : Appearance {
     float actionScale = .6f; // Action size.
     bool pinIcons = true; // Linkshell/bazaar on the name's left corners instead of the prefix.
     bool pinOnTop = false; // Pinned icons over the name instead of under it.
-    float traitScale = .8f; // Trait icons, relative to the name height.
+    int linkshellX = 0, linkshellY = 0, bazaarX = 0, bazaarY = 0; // Pinned icon nudges, name units (-16..16).
+    float traitScale = 1; // Aggro icons; 100% matches weaknesses/resistances at 100%.
     float weakScale = 1, resistScale = 1; // Weakness/resistance icons, relative to their fixed row height.
     bool scrollXp = false; // Experimental: gained points drift from your name.
     bool growTarget = false; // Experimental: control the selected target plate's distant size.

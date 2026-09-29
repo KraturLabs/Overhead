@@ -49,7 +49,7 @@ struct SideLabels {
     float scale=1, actionScale=.6f; // User factors relative to the name size.
     // MobDB damage modifier bits (traits.h); each row's icons scale within its fixed slot.
     std::uint16_t weak=0, resist=0;
-    float weakScale=1, resistScale=1, traitScale=.8f; // A lone row takes the trait size.
+    float weakScale=1, resistScale=1, traitScale=1;
     // Parts drawn over world geometry, as DetailColumn bits; RowShow is the name.
     unsigned front=0;
 };
@@ -102,6 +102,7 @@ struct StatusIcons {
     std::uint32_t linkshellColor = 0;
     bool pin = true;       // False leaves them in the native prefix like any other icon.
     bool pinOnTop = false; // Default tucks them under the name.
+    float linkshellX = 0, linkshellY = 0, bazaarX = 0, bazaarY = 0; // User nudges, local name units.
 };
 constexpr std::uint8_t LinkshellGlyph = 0x92, BazaarGlyph = 0x9C;
 static_assert(sizeof(Glyph) == 44 && sizeof(Vertex) == 28 && sizeof(Quad) == 124);

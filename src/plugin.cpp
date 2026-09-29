@@ -150,7 +150,8 @@ Actions actions;
 // Fixed sizes: level 60%, distance 45% of the name. Traits follow their slider.
 constexpr float LevelScale=.6f,LabelScale=.45f;
 std::atomic<bool> pinIcons{true},pinOnTop{false};
-std::atomic<float> actionScale{.6f},weakScale{1},resistScale{1},traitScale{.8f};
+std::atomic<int> linkshellX{0},linkshellY{0},bazaarX{0},bazaarY{0};
+std::atomic<float> actionScale{.6f},weakScale{1},resistScale{1},traitScale{1};
 Levels levels;
 std::atomic<unsigned> traitZone{0}; // Initial SDK zone, then zone-transition packets.
 TraitTexture traitTexture;
@@ -161,6 +162,7 @@ void PublishVisuals(const Options& options) noexcept {
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;drainRows=options.drainRows;npcFeatures=options.npcFeatures;
     pinIcons=options.pinIcons;pinOnTop=options.pinOnTop;
+    linkshellX=options.linkshellX;linkshellY=options.linkshellY;bazaarX=options.bazaarX;bazaarY=options.bazaarY;
     actionScale=options.actionScale;weakScale=options.weakScale;resistScale=options.resistScale;traitScale=options.traitScale;scrollXp=options.scrollXp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
@@ -676,6 +678,8 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
         icons->replace=true;icons->show=showIcons;
         icons->pin=pinIcons.load(std::memory_order_relaxed);
         icons->pinOnTop=pinOnTop.load(std::memory_order_relaxed);
+        icons->linkshellX=float(linkshellX.load(std::memory_order_relaxed));icons->linkshellY=float(linkshellY.load(std::memory_order_relaxed));
+        icons->bazaarX=float(bazaarX.load(std::memory_order_relaxed));icons->bazaarY=float(bazaarY.load(std::memory_order_relaxed));
         // Linkshell and bazaar are pinned apart from the priority winner, so both
         // flags are read directly (native tests 0x976DF bazaar, 0x97875 linkshell).
         std::uint32_t flags[2]; // Adjacent Render.Flags1 and Flags2, one snapshot.
@@ -1424,11 +1428,18 @@ public:
             gui->BeginDisabled(!options_.pinIcons);
             changed=gui->Checkbox("Corner icons in front of the name",&options_.pinOnTop)||changed;
             tip("Off: the name covers the corner icons. On: the icons cover the name.");
+            changed=gui->SliderInt("Linkshell left/right",&options_.linkshellX,-16,16,"%d",ImGuiSliderFlags_AlwaysClamp)||changed;
+            changed=gui->SliderInt("Linkshell up/down",&options_.linkshellY,-16,16,"%d",ImGuiSliderFlags_AlwaysClamp)||changed;
+            changed=gui->SliderInt("Bazaar left/right",&options_.bazaarX,-16,16,"%d",ImGuiSliderFlags_AlwaysClamp)||changed;
+            changed=gui->SliderInt("Bazaar up/down",&options_.bazaarY,-16,16,"%d",ImGuiSliderFlags_AlwaysClamp)||changed;
+            tip("Moves each corner icon from its default spot; 8 is about one capital letter. Negative is left or up.");
+            if(gui->Button("Reset icon positions")){options_.linkshellX=options_.linkshellY=options_.bazaarX=options_.bazaarY=0;changed=true;}
             gui->EndDisabled();
             gui->EndDisabled();
             gui->EndTabItem();
             }
-            if(gui->BeginTabItem("Font")){
+            // Font settings only apply to the custom font, so the tab is hidden otherwise.
+            if(requested.load()>=2&&gui->BeginTabItem("Font")){
             const char* selectedFont=fontFamily_[0]?fontFamily_:"Tahoma (default)";
             if(gui->BeginCombo("Font",selectedFont,ImGuiComboFlags_HeightLarge)){
                 // Enumerate once per opening, never during name drawing or every UI frame.
@@ -1521,7 +1532,7 @@ public:
             tip("Icon size; 16 is the default.");
             changed=percent("Action text",options_.actionScale,25,300)||changed;
             tip("Compared with the name.");
-            if(gui->Button("Reset sizes")){options_.traitScale=.8f;options_.weakScale=options_.resistScale=1;options_.debuffSize=16;options_.actionScale=.6f;changed=true;}
+            if(gui->Button("Reset sizes")){options_.traitScale=1;options_.weakScale=options_.resistScale=1;options_.debuffSize=16;options_.actionScale=.6f;changed=true;}
             tip("Back to the default sizes.");
             gui->SeparatorText("Draw in front of scenery");
             gui->TextWrapped("Checked parts show through bodies and scenery instead of hiding behind them. A closer name can still cover them.");
