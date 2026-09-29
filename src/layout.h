@@ -80,6 +80,8 @@ struct Vertex {
 constexpr std::uint32_t FrontCode = 0x10000u;
 // Set in Quad::code for quads drawn before everything else, under the name.
 constexpr std::uint32_t UnderCode = 0x20000u;
+// Set in Quad::code for detail text drawn after all other detail text and outlines.
+constexpr std::uint32_t TopCode = 0x40000u;
 constexpr unsigned TextTexture=4;
 struct Quad {
     std::uint32_t code, textureGroup, alphaReference;

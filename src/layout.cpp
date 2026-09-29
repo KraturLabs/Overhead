@@ -325,7 +325,10 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                         // Tuned in game: a little right of centre and up (name units).
                         constexpr float CheckX=.6f,CheckY=-.8f;
                         const float checkPen=labelPen+(prefixWidth*PrefixSize*level->scale-checkWidth*size)/2+CheckX;
+                        const auto checkFirst=out.count;
                         detailLeft=std::min(detailLeft,write(level->check,level->checkLength,level->color,size,checkPen,bottom-checkBase+CheckY));
+                        // Over the level where they meet, outline included.
+                        for(auto i=checkFirst;i<out.count;++i)out.quads[i].code|=TopCode;
                     }
                 }
             }

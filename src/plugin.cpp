@@ -913,25 +913,28 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         v[3]=q.vertices[1];v[4]=q.vertices[3];v[5]=q.vertices[2];
         return true;
     };
-    // Reuse the letter geometry with the atlas's black outline half. Two layers:
+    // Reuse the letter geometry with the atlas's black outline half. Three layers:
     // the name and icons, then detail text (0x100 tag) such as the action, which
-    // can overlap the name. Within a layer all outlines go first, so adjacent
+    // can overlap the name, then the check rank (TopCode) over the level. Within a layer all outlines go first, so adjacent
     // letters never cover each other's interiors; a later layer's outline covers
     // the name so overlapping text stays fully outlined. Draw state still batches.
-    const auto detail=[&](const Quad& q){return q.textureGroup==TextTexture&&(q.code&0x100u)!=0;};
+    const auto layerOf=[&](const Quad& q)->unsigned{
+        if(q.textureGroup!=TextTexture||!(q.code&0x100u))return 0;
+        return q.code&nameplate_lab::TopCode?2:1;
+    };
     // Pinned name icons go first so the name and its outline cover them.
     for(unsigned i=0;i<output.count;++i)if((output.quads[i].code&nameplate_lab::UnderCode)&&!emit(output.quads[i]))return fail();
-    for(unsigned layer=0;layer<2;++layer){
+    for(unsigned layer=0;layer<3;++layer){
         if(resources.textOutline){
             for(unsigned i=0;i<output.count;++i){
-                if(output.quads[i].textureGroup!=TextTexture||(output.quads[i].code&nameplate_lab::UnderCode)||detail(output.quads[i])!=(layer==1))continue;
+                if(output.quads[i].textureGroup!=TextTexture||(output.quads[i].code&nameplate_lab::UnderCode)||layerOf(output.quads[i])!=layer)continue;
                 auto q=output.quads[i];
                 for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
                 if(!emit(q))return fail();
             }
         }
         for(unsigned i=0;i<output.count;++i){
-            if((output.quads[i].code&nameplate_lab::UnderCode)||detail(output.quads[i])!=(layer==1))continue;
+            if((output.quads[i].code&nameplate_lab::UnderCode)||layerOf(output.quads[i])!=layer)continue;
             Quad pieces[2];
             const auto* quads=&output.quads[i];
             unsigned pieceCount=1;
