@@ -52,7 +52,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace nameplate_lab;
-constexpr char Version[]="0.9.31";
+constexpr char Version[]="0.9.32";
 text_font::Font textFont;
 IDirect3DTexture8* textTexture=nullptr;
 // Native icon expansion tables; setup requires exactly these values before any hook.
@@ -1003,7 +1003,7 @@ bool LoadTextFont(IDirect3DDevice8* device,unsigned outline,char (&error)[128],c
     }
     if(FAILED(result)){
         if(texture)texture->Release();
-        _snprintf_s(error,sizeof(error),_TRUNCATE,"Font texture upload failed (%08X).",static_cast<unsigned>(result));
+        _snprintf_s(error,sizeof(error),_TRUNCATE,"Could not load the font into the game (error %08X).",static_cast<unsigned>(result));
         return false;
     }
     std::vector<std::uint32_t>().swap(prepared.pixels);
@@ -1027,7 +1027,7 @@ class Plugin final:public IPlugin {
     bool ApplyFont(IDirect3DDevice8* device,unsigned outline,const char* family="",bool italic=false,unsigned soften=0) {
         wchar_t face[32]{};
         if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,family,-1,face,32)){
-            strcpy_s(fontError_,"Invalid Windows font family name.");return false;
+            strcpy_s(fontError_,"That font name is not valid.");return false;
         }
         // Preparation allocates the 2 MB atlas; never let a failure escape into the game.
         try{return LoadTextFont(device,outline,fontError_,face,italic,soften);}
@@ -1130,7 +1130,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Custom-font nameplates with sizing, native icons and enemy HP color fill";}
-    double GetVersion()const override{return 0.931;}
+    double GetVersion()const override{return 0.932;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -1308,80 +1308,138 @@ public:
         if(!window_||!core_)return;
         auto* gui=core_->GetGuiManager();
         if(!gui||!gui->GetCurrentContext())return;
+        // The window fits each tab but never gets narrower than the tab row.
+        static constexpr const char* Tabs[]={"Names","Font","Details","Detail style","Combat"};
+        const auto& style=gui->GetStyle();
+        float tabRow=style.WindowPadding.x*2;
+        for(const auto* tab:Tabs)tabRow+=gui->CalcTextSize(tab).x+style.FramePadding.x*2+style.ItemInnerSpacing.x;
         gui->SetNextWindowSize(ImVec2(430,0),ImGuiCond_FirstUseEver);
+        gui->SetNextWindowSizeConstraints(ImVec2(tabRow,0),ImVec2(1e5f,1e5f));
         if(gui->Begin("NameplateLab",&window_,ImGuiWindowFlags_AlwaysAutoResize)){
             bool changed=false;
+            // Tooltips wrap at a readable width instead of running on as one line.
+            const auto tip=[&](const char* text){
+                if(!gui->IsItemHovered()||!gui->BeginTooltip())return;
+                gui->PushTextWrapPos(gui->GetFontSize()*24);gui->TextUnformatted(text);gui->PopTextWrapPos();
+                gui->EndTooltip();
+            };
+            // Sizes are stored as factors and shown as percentages.
+            const auto percent=[&](const char* label,float& value,float low,float high){
+                float shown=value*100;
+                if(!gui->SliderFloat(label,&shown,low,high,"%.0f%%",ImGuiSliderFlags_AlwaysClamp))return false;
+                value=shown/100;return true;
+            };
+            // Width that undoes the game's sideways stretch. The screen size is read only while its tab is shown.
+            const auto widescreen=[&](const char* label,bool (*apply)(Options&,unsigned,unsigned)){
+                SizingReference reference;
+                const bool canFit=ReadSizingReference(reference);
+                gui->BeginDisabled(!canFit);
+                if(gui->Button(label)&&canFit)changed=apply(options_,reference.screenWidth,reference.screenHeight)||changed;
+                gui->EndDisabled();
+                if(canFit&&gui->IsItemHovered()){
+                    char text[192];
+                    _snprintf_s(text,sizeof(text),_TRUNCATE,"Undoes the game's sideways stretch on wide screens. For your %ux%u screen that is Size 100%%, Width %.0f%%, so letters and icons keep their true shape.",reference.screenWidth,reference.screenHeight,reference.width*100);
+                    tip(text);
+                }
+                return canFit;
+            };
+            // Both tables list rows in the order a name picks one: the first that fits, from the top.
+            static constexpr unsigned RowOrder[RowCount]={RowSelf,RowTarget,RowParty,RowClaimedSelf,RowClaimedParty,RowClaimedOther,RowUnclaimed,RowOtherPlayers};
+            static constexpr const char* RowNames[RowCount]={"Target","You","Party/Alliance","Claimed by you",
+                "Claimed by party","Claimed by others","Unclaimed","Other players"};
+            static constexpr const char* RowHelp[RowCount]={
+                "Whatever you have targeted: a monster, a player, or an NPC if allowed below.",
+                "Your own name, even while you target yourself.",
+                "Party and alliance members in your zone, including trusts.",
+                "Monsters you are fighting.",
+                "Monsters someone else in your party or alliance is fighting.",
+                "Monsters someone outside your party and alliance is fighting.",
+                "Monsters nobody is fighting yet.",
+                "Players outside your party and alliance, while not targeted."};
+            // Bit 0 marks the HP bar, a per-row setting kept apart from On and the details.
+            struct Column{unsigned bit;const char* name;const char* help;};
+            static constexpr Column Columns[]={
+                {RowShow,"On","Turns this row's details on or off, keeping your choices. The HP bar is separate."},
+                {ShowHealth,"HP%","Health percent, in warning colors as it drops."},
+                {0,"HP bar","The name doubles as an HP bar: the part matching lost HP is dimmed. Player names also change color below 75% HP."},
+                {ShowMp,"MP","Magic points percent, for jobs that use MP."},
+                {ShowTp,"TP","TP as a percent: 100% is 1000 TP."},
+                {ShowDistance,"Distance","Distance in yalms."},
+                {ShowLevel,"Level","Monster level, colored by how tough it checks. Shows Lv.?? until known."},
+                {ShowTraits,"Aggro","How the monster notices you (sight, sound, magic and so on) and whether it attacks on its own (red) or leaves you alone (blue). These are its usual habits from a monster database, not what it is doing now."},
+                {ShowWeak,"Weak","Weapon types and elements that do extra damage to it (green bar), from a monster database."},
+                {ShowResist,"Resist","Weapon types and elements that do less damage to it, including immunities (red bar), from a monster database."},
+                {ShowDebuffs,"Debuffs","Negative effects on it, such as poison, slow or sleep."},
+                {ShowAction,"Action","Abilities and spells being readied or cast, then the result: green if it worked, red if it failed."}};
+            // The details table has a label column plus every column; the front table drops the HP bar.
+            constexpr int ColumnCount=static_cast<int>(sizeof(Columns)/sizeof(*Columns));
+            // One heading row with a tooltip each. In the front table On stands for the name itself.
+            const auto header=[&](bool details){
+                gui->TableSetupColumn("");
+                for(const auto& column:Columns)
+                    if(details||column.bit)gui->TableSetupColumn(!details&&column.bit==RowShow?"Name":column.name);
+                gui->TableNextRow(ImGuiTableRowFlags_Headers);
+                int index=0;
+                const auto heading=[&](const char* name,const char* help){
+                    gui->TableSetColumnIndex(index);gui->PushID(index++);gui->TableHeader(name);gui->PopID();
+                    if(help)tip(help);
+                };
+                heading("",nullptr);
+                for(const auto& column:Columns){
+                    if(!details&&column.bit==RowShow)heading("Name","The name and its icons.");
+                    else if(details||column.bit)heading(column.name,column.help);
+                }
+            };
+            const auto rowName=[&](unsigned row){
+                gui->TableNextRow();gui->TableNextColumn();gui->TextUnformatted(RowNames[row]);tip(RowHelp[row]);
+            };
             if(gui->BeginTabBar("SettingsTabs")){
-            if(gui->BeginTabItem("General")){
-            gui->SeparatorText("Nameplates");
+            if(gui->BeginTabItem("Names")){
             int selected=static_cast<int>((std::min)(requested.load(),2u));
-            if(gui->Combo("Display",&selected,"Original\0Self only\0All names\0"))SelectMode(static_cast<unsigned>(selected));
-            float size=options_.scale*100,width=options_.width*100;
-            if(gui->SliderFloat("Size",&size,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.scale=size/100;changed=true;}
-            if(gui->SliderFloat("Width",&width,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.width=width/100;changed=true;}
-            int filter=static_cast<int>(options_.filter);
-            if(gui->Combo("Rendering",&filter,"Native\0Sharp\0Smooth\0")){options_.filter=static_cast<unsigned>(filter);changed=true;}
-            changed=gui->Checkbox("Show name icons",&options_.showStatusIcons)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Player status icons the game shows by a name, with its own priority and stacking, drawn left of the name. The name and cursor center on the name alone.");
-            changed=gui->Checkbox("Linkshell/bazaar on the name's corners",&options_.pinIcons)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Linkshell on the top-left and bazaar on the bottom-left corner of player names, both shown together. Off: they stay with the other name icons, as the game chooses.");
-            changed=gui->Checkbox("Linkshell/bazaar over the name",&options_.pinOnTop)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Off: the name covers the icons. On: the icons cover the name.");
-            SizingReference reference;
-            const bool canFit=ReadSizingReference(reference);
-            gui->BeginDisabled(!canFit);
-            if(gui->Button("Match original 4:3")&&canFit){
-                changed=ApplyOriginalSizing(options_,reference.screenWidth,reference.screenHeight)||changed;
-            }
-            gui->EndDisabled();
-            if(canFit){
-                gui->Text("%ux%u baseline: Size 100%% / Width %.2f%%",reference.screenWidth,reference.screenHeight,reference.width*100);
-                gui->TextUnformatted("Keeps the game art's own proportions on this screen; keeps native height.");
-            }else gui->TextUnformatted("Resolution unavailable or outside the sizing range.");
-            if(gui->Button("Reset appearance")){
-                options_.scale=1;options_.width=1;options_.correctAspect=false;options_.filter=2;options_.showStatusIcons=true;changed=true;
-            }
-            gui->SeparatorText("Target cursor");
+            if(gui->Combo("Restyle names",&selected,"Off (game's own)\0My name only\0All names\0"))SelectMode(static_cast<unsigned>(selected));
+            tip("Which names Nameplate Lab draws. Off leaves the game's own names, without any of the extras.");
+            gui->SeparatorText("Size");
+            changed=percent("Size",options_.scale,25,300)||changed;
+            tip("Overall size of names and everything shown with them.");
+            changed=percent("Width",options_.width,25,300)||changed;
+            tip("Makes names narrower or wider; their height stays the same.");
+            const bool canFit=widescreen("Fix widescreen stretch",ApplyOriginalSizing);
+            gui->SameLine();
+            if(gui->Button("Reset size")){options_.scale=1;options_.width=1;options_.correctAspect=false;changed=true;}
+            tip("Size and Width back to 100%, matching the game's own names.");
+            if(!canFit)gui->TextDisabled("Screen size unknown, so the widescreen fix is unavailable.");
+            gui->SeparatorText("Target");
+            changed=gui->Checkbox("Enlarge far-away target",&options_.growTarget)||changed;
+            tip("Makes your target's name bigger when it is far away. The extra size fades as you get closer and is gone by 3 yalms.");
+            gui->Indent();gui->BeginDisabled(!options_.growTarget);
+            changed=percent("Far-away size",options_.growFarSize,25,100)||changed;
+            tip("Your target's name size beyond 25 yalms, compared with a full-size name up close. Names already bigger are left alone.");
+            gui->EndDisabled();gui->Unindent();
             if(gui->Checkbox("Hide the game's target window",&options_.hideTarget)){
                 if(options_.hideTarget&&!options_.keepCursor){options_.keepCursor=true;cursorAttempted=false;}
                 changed=true;
             }
-            if(gui->IsItemHovered())gui->SetTooltip("Hides the target window without HideParty and restores exactly what was there when turned off or unloaded. Also keeps the native overhead cursor.");
-            if(gui->Checkbox("Keep native overhead cursor",&options_.keepCursor)){cursorAttempted=false;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Keeps the native animated arrow when the target panel is hidden. Leaves the panel hidden.");
-            if(options_.keepCursor&&!cursorReady)gui->Text("Cursor: %s",cursorProblem);
-            gui->SeparatorText("Damage numbers");
-            changed=gui->Checkbox("Adjust damage numbers",&options_.damageEnabled)||changed;
-            if(damageFault.load()){
-                gui->TextUnformatted("Damage adjustments unavailable. Retry checks compatibility again.");
-                if(gui->Button("Retry damage adjustments"))damageRetry_=true;
-            }
-            float damageSize=options_.damageScale*100,damageWide=options_.damageWidth*100;
-            if(gui->SliderFloat("Size##damage",&damageSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.damageScale=damageSize/100;options_.damageEnabled=true;changed=true;}
-            if(gui->SliderFloat("Width##damage",&damageWide,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.damageWidth=damageWide/100;options_.damageEnabled=true;changed=true;}
-            gui->BeginDisabled(!canFit);
-            if(gui->Button("Match original 4:3##damage")&&canFit)
-                changed=ApplyDamageSizing(options_,reference.screenWidth,reference.screenHeight)||changed;
+            tip("Hides the box that shows your target's name and HP; no other addon needed. Turning this off, or unloading, brings it back. Also turns on the arrow option below.");
+            if(gui->Checkbox("Keep the arrow over your target",&options_.keepCursor)){cursorAttempted=false;changed=true;}
+            tip("The game's bouncing arrow over your target goes away when the target window is hidden. This keeps it, with its usual animation and colors.");
+            if(options_.keepCursor&&cursorAttempted&&!cursorReady)
+                gui->TextWrapped("The arrow isn't available right now; another plugin or addon may be handling it. /nplab status shows why.");
+            gui->SeparatorText("Player icons");
+            changed=gui->Checkbox("Show player status icons",&options_.showStatusIcons)||changed;
+            tip("The icons the game shows beside player names (linkshell, bazaar, seeking party, away and others), kept just left of the name so the name stays centered.");
+            gui->BeginDisabled(!options_.showStatusIcons);
+            changed=gui->Checkbox("Linkshell and bazaar on the name's corners",&options_.pinIcons)||changed;
+            tip("Linkshell on the top-left corner and bazaar on the bottom-left, both at once. Off: they stay with the other icons, and the game shows only one of them.");
+            gui->BeginDisabled(!options_.pinIcons);
+            changed=gui->Checkbox("Corner icons in front of the name",&options_.pinOnTop)||changed;
+            tip("Off: the name covers the corner icons. On: the icons cover the name.");
             gui->EndDisabled();
-            if(canFit)gui->Text("Baseline: Size 100%% / Width %.2f%%",reference.width*100);
-            else gui->TextUnformatted("Display resolution unavailable or outside the sizing range.");
-            gui->TextUnformatted("Keeps the game's damage animation, colors and font.");
-            if(gui->Button("Reset damage appearance")){
-                options_.damageEnabled=false;options_.damageCorrectAspect=false;
-                options_.damageScale=1;options_.damageWidth=1;changed=true;
+            gui->EndDisabled();
+            gui->EndTabItem();
             }
-            gui->SeparatorText("Scrolling XP and distant target");
-            changed=gui->Checkbox("Scrolling XP from your name",&options_.scrollXp)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Experience, limit, capacity and exemplar points you gain drift down from your name and fade over 3 seconds.");
-            changed=gui->Checkbox("Enlarge distant target",&options_.growTarget)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Beyond 25 yalms a smaller target plate is raised to Distant size. The extra size fades smoothly as you approach and is gone by 3 yalms, where the plate is its ordinary size. Your Size and Width settings still apply.");
-            float growSize=options_.growFarSize*100;
-            if(gui->SliderFloat("Distant size",&growSize,25,100,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.growFarSize=growSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Readability size at 25 yalms, relative to the game's full-size plate. Only enlarges names smaller than this; never makes nearby names bigger.");
-            if(gui->Button("Reset target enlargement")){options_.growFarSize=1;changed=true;}
-            gui->SeparatorText("Nameplate font");
+            if(gui->BeginTabItem("Font")){
             const char* selectedFont=fontFamily_[0]?fontFamily_:"Tahoma (default)";
-            if(gui->BeginCombo("Windows font",selectedFont,ImGuiComboFlags_HeightLarge)){
+            if(gui->BeginCombo("Font",selectedFont,ImGuiComboFlags_HeightLarge)){
                 // Enumerate once per opening, never during name drawing or every UI frame.
                 if(gui->IsWindowAppearing())fontFamilies_=text_font::InstalledFamilies();
                 if(gui->Selectable("Tahoma (default)",!fontFamily_[0]))fontFamily_[0]=0;
@@ -1392,11 +1450,12 @@ public:
                 }
                 gui->EndCombo();
             }
-            if(gui->IsItemHovered())gui->SetTooltip("Installed Windows font families, using bold weight. Choose one, then Apply font.");
+            tip("Fonts installed in Windows, in bold. Pick one, then press Apply font.");
             gui->Checkbox("Italic",&fontItalic_);
             gui->SliderInt("Outline",&fontOutline_,0,6,"%d",ImGuiSliderFlags_AlwaysClamp);
+            tip("Thickness of the dark outline around letters. 0 is none.");
             gui->SliderInt("Edge softness",&fontSoften_,0,2,"%d",ImGuiSliderFlags_AlwaysClamp);
-            if(gui->IsItemHovered())gui->SetTooltip("0 is crisp. Higher values soften letter edges slightly so slanted strokes step less after the game scales them. Apply font to see it.");
+            tip("0 is crisp. 1 or 2 softens letter edges slightly, so slanted (italic) letters look less jagged.");
             if(gui->Button("Apply font")){
                 if(ApplyFont(core_->GetDirect3DDevice(),static_cast<unsigned>(fontOutline_),fontFamily_,fontItalic_,static_cast<unsigned>(fontSoften_))){
                     strcpy_s(options_.fontFamily,fontFamily_);options_.fontOutline=static_cast<unsigned>(fontOutline_);options_.fontItalic=fontItalic_;options_.fontSoften=static_cast<unsigned>(fontSoften_);dirty_=true;
@@ -1408,104 +1467,122 @@ public:
                     options_.fontFamily[0]=fontFamily_[0]=0;options_.fontOutline=3;fontOutline_=3;options_.fontSoften=0;fontSoften_=0;options_.fontItalic=fontItalic_=false;dirty_=true;
                 }
             }
+            tip("Back to Tahoma with the standard outline.");
+            if(std::strcmp(fontFamily_,options_.fontFamily)||fontItalic_!=options_.fontItalic
+                ||fontOutline_!=static_cast<int>(options_.fontOutline)||fontSoften_!=static_cast<int>(options_.fontSoften))
+                gui->TextUnformatted("Press Apply font to use these changes.");
             if(textTexture){
                 char face[128]{};WideCharToMultiByte(CP_UTF8,0,textFont.face,-1,face,sizeof(face),nullptr,nullptr);
-                gui->Text("Using: %s",face);
-                if(textFont.substitutions)gui->Text("%u missing characters use Tahoma.",textFont.substitutions);
+                gui->Text("Current font: %s",face);
+                if(textFont.substitutions)gui->Text("%u characters this font lacks use Tahoma.",textFont.substitutions);
             }
             if(fontError_[0])gui->TextWrapped("%s",fontError_);
+            gui->Separator();
+            int filter=static_cast<int>(options_.filter);
+            if(gui->Combo("Letter scaling",&filter,"Game default\0Sharp\0Smooth\0")){options_.filter=static_cast<unsigned>(filter);changed=true;}
+            tip("How letters and icons are resized on screen. Smooth blends their edges, Sharp keeps hard pixel edges, Game default uses the game's own setting. Changes right away.");
             gui->EndTabItem();
             }
             if(gui->BeginTabItem("Details")){
+            gui->TextWrapped("Choose what shows on each kind of name. A name uses the first row that fits it, from the top.");
+            if(gui->BeginTable("PlateRows",ColumnCount+1,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+                header(true);
+                for(const auto row:RowOrder){
+                    rowName(row);
+                    for(int c=0;c<ColumnCount;++c){
+                        gui->TableNextColumn();
+                        const unsigned bit=Columns[c].bit;
+                        if(bit&&!(RowColumns[row]&bit)){gui->TextDisabled("-");continue;}
+                        unsigned& set=bit?options_.rows[row]:options_.drainRows;
+                        const unsigned mask=bit?bit:1u<<row;
+                        bool on=(set&mask)!=0;
+                        gui->PushID(static_cast<int>(row)*32+c);
+                        gui->BeginDisabled(bit&&bit!=RowShow&&!(options_.rows[row]&RowShow));
+                        if(gui->Checkbox("##detail",&on)){set^=mask;changed=true;}
+                        gui->EndDisabled();
+                        gui->PopID();
+                    }
+                }
+                gui->EndTable();
+            }
+            gui->TextDisabled("Hover a row or heading to learn more. A dash means it doesn't apply.");
+            changed=gui->Checkbox("Show details on targeted NPCs",&options_.npcFeatures)||changed;
+            tip("Lets a targeted NPC, such as a shopkeeper, use the Target row. Off: NPCs never show details.");
+            changed=gui->Checkbox("Unclaimed monsters: only after they take damage",&options_.unclaimedDamagedOnly)||changed;
+            tip("Unclaimed monsters at full HP show no details unless you target them.");
+            changed=gui->Checkbox("Automatically check monster levels",&options_.autoCheck)||changed;
+            tip("Quietly checks the monster you target so the Level column can show its level. Nothing is printed in chat, and your own /check still works as usual.");
+            if(FAILED(traitTextureResult))gui->TextWrapped("Aggro, weakness and resistance icons couldn't load; reload the plugin to try again.");
+            if(FAILED(debuffTextureResult))gui->TextWrapped("Debuff icons couldn't load; reload the plugin to try again.");
+            gui->EndTabItem();
+            }
+            if(gui->BeginTabItem("Detail style")){
             bool preview=previewDebuffs.load();
-            if(gui->Checkbox("Preview on target and yourself",&preview))previewDebuffs=preview;
-            if(gui->IsItemHovered())gui->SetTooltip("Shows sample debuffs (poison, paralysis, blindness, silence, slow) and a sample action cycling white/green/red on your selected target, enemy or player, and on yourself. Not saved; turn off to see observed effects.");
-            gui->SeparatorText("Plates");
-            // One row per category; each name uses the first it matches, except that you keep
-            // your own row when targeting yourself.
-            static constexpr const char* RowNames[RowCount]={"Target","You","Party/Alliance","Claimed by you",
-                "Claimed by party","Claimed by others","Unclaimed","Other players"};
-            static constexpr const char* ColumnNames[]={"Show","HP%","TP","MP","Level","Traits","Debuffs","Action","Dist.","Weak","Resist"};
-            static constexpr unsigned Columns[]={RowShow,ShowHealth,ShowTp,ShowMp,ShowLevel,ShowTraits,ShowDebuffs,ShowAction,ShowDistance,ShowWeak,ShowResist};
-            if(gui->BeginTable("PlateRows",13,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
-                gui->TableSetupColumn("");
-                for(const auto* name:ColumnNames)gui->TableSetupColumn(name);
-                gui->TableSetupColumn("HP drain");
-                gui->TableHeadersRow();
-                for(unsigned row=0;row<RowCount;++row){
-                    gui->TableNextRow();gui->TableNextColumn();gui->TextUnformatted(RowNames[row]);
-                    for(unsigned c=0;c<sizeof(Columns)/sizeof(*Columns);++c){
-                        gui->TableNextColumn();
-                        if(!(RowColumns[row]&Columns[c])){gui->TextDisabled("-");continue;}
-                        char id[16];_snprintf_s(id,sizeof(id),_TRUNCATE,"##%u.%u",row,c);
-                        bool on=(options_.rows[row]&Columns[c])!=0;
-                        if(gui->Checkbox(id,&on)){options_.rows[row]^=Columns[c];changed=true;}
-                    }
-                    gui->TableNextColumn();
-                    char drainId[16];_snprintf_s(drainId,sizeof(drainId),_TRUNCATE,"##drain%u",row);
-                    bool drain=(options_.drainRows&(1u<<row))!=0;
-                    if(gui->Checkbox(drainId,&drain)){options_.drainRows^=1u<<row;changed=true;}
-                    if(gui->IsItemHovered())gui->SetTooltip("Dims the lost-health portion of the name; independent of the HP%% label. Players also use HP warning colors below 75%%.");
-                }
-                gui->EndTable();
-            }
-            gui->TextUnformatted("You, then target, party/alliance, enemies by claim, other players.");
-            gui->TextUnformatted("A targeted player uses Target; untargeted players outside your party use Other players.");
-            changed=gui->Checkbox("Apply features to NPCs",&options_.npcFeatures)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Off: targeted NPCs show no HP%%, distance or other details.");
-            changed=gui->Checkbox("Unclaimed: only once damaged",&options_.unclaimedDamagedOnly)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Unhurt unclaimed monsters show no details unless targeted.");
-            gui->SeparatorText("On top");
-            if(gui->BeginTable("FrontRows",12,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
-                gui->TableSetupColumn("");
-                gui->TableSetupColumn("Name");
-                for(unsigned c=1;c<sizeof(ColumnNames)/sizeof(*ColumnNames);++c)gui->TableSetupColumn(ColumnNames[c]);
-                gui->TableHeadersRow();
-                for(unsigned row=0;row<RowCount;++row){
-                    gui->TableNextRow();gui->TableNextColumn();gui->TextUnformatted(RowNames[row]);
-                    for(unsigned c=0;c<sizeof(Columns)/sizeof(*Columns);++c){
-                        gui->TableNextColumn();
-                        if(!(RowColumns[row]&Columns[c])){gui->TextDisabled("-");continue;}
-                        char id[16];_snprintf_s(id,sizeof(id),_TRUNCATE,"##f%u.%u",row,c);
-                        bool on=(options_.front[row]&Columns[c])!=0;
-                        if(gui->Checkbox(id,&on)){options_.front[row]^=Columns[c];changed=true;}
-                    }
-                }
-                gui->EndTable();
-            }
-            gui->TextUnformatted("Checked parts draw over bodies and scenery. Nearer names can still cover them.");
-            gui->SeparatorText("Levels, traits, weaknesses");
-            changed=gui->Checkbox("Automatically check monster targets",&options_.autoCheck)||changed;
-            if(gui->IsItemHovered())gui->SetTooltip("Silent checks while any row shows levels. Manual /check still prints normally. Unknown levels show Lv.?? until a check or widescan reply.");
-            gui->TextUnformatted("Traits: MobDB defaults, not current hostility. Red: aggressive, blue: passive.");
-            gui->TextUnformatted("Weak/Resist: MobDB damage taken, first right of the name. Green bar: weaknesses, red bar: resistances.");
-            float traitSize=options_.traitScale*100;
-            if(gui->SliderFloat("Trait size",&traitSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.traitScale=traitSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Trait icons left of the level, relative to the name height.");
-            if(gui->Button("Reset trait size")){options_.traitScale=.8f;changed=true;}
-            float weakSize=options_.weakScale*100,resistSize=options_.resistScale*100;
-            if(gui->SliderFloat("Weakness size",&weakSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.weakScale=weakSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Weapon types and elements that deal more than normal damage. Relative to the row's HP/MP/TP-column height.");
-            if(gui->SliderFloat("Resistance size",&resistSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.resistScale=resistSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Weapon types and elements that deal less than normal damage, including immunity.");
-            if(gui->Button("Reset weakness/resistance size")){options_.weakScale=options_.resistScale=1;changed=true;}
-            if(FAILED(traitTextureResult))gui->TextUnformatted("Trait artwork unavailable; reload the plugin to try again.");
-            gui->SeparatorText("Labels");
-            float actionSize=options_.actionScale*100;
-            if(gui->SliderFloat("Action size",&actionSize,25,300,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)){options_.actionScale=actionSize/100;changed=true;}
-            if(gui->IsItemHovered())gui->SetTooltip("Readies and casts; the result stays 4 seconds: green success, red interrupted/missed/resisted.");
-            if(gui->Button("Reset action size")){options_.actionScale=.6f;changed=true;}
+            if(gui->Checkbox("Preview on your target and yourself",&preview))previewDebuffs=preview;
+            tip("Shows sample debuffs and a sample action (cycling white, green and red) on your target and yourself, so you can judge sizes. Not saved; turn it off to see real effects.");
+            gui->SeparatorText("Sizes");
+            changed=percent("Aggro icons",options_.traitScale,25,300)||changed;
+            tip("Compared with the name.");
+            changed=percent("Weaknesses",options_.weakScale,25,300)||changed;
+            changed=percent("Resistances",options_.resistScale,25,300)||changed;
             int iconSize=static_cast<int>(options_.debuffSize);
-            if(gui->SliderInt("Debuff icon size",&iconSize,4,24,"%d",ImGuiSliderFlags_AlwaysClamp)){options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;}
-            if(gui->Button("Reset debuff size")){options_.debuffSize=16;changed=true;}
-            if(FAILED(debuffTextureResult))gui->TextUnformatted("Debuff artwork unavailable; reload the plugin to try again.");
+            if(gui->SliderInt("Debuff icons",&iconSize,4,24,"%d",ImGuiSliderFlags_AlwaysClamp)){options_.debuffSize=static_cast<unsigned>(iconSize);changed=true;}
+            tip("Icon size; 16 is the default.");
+            changed=percent("Action text",options_.actionScale,25,300)||changed;
+            tip("Compared with the name.");
+            if(gui->Button("Reset sizes")){options_.traitScale=.8f;options_.weakScale=options_.resistScale=1;options_.debuffSize=16;options_.actionScale=.6f;changed=true;}
+            tip("Back to the default sizes.");
+            gui->SeparatorText("Draw in front of scenery");
+            gui->TextWrapped("Checked parts show through bodies and scenery instead of hiding behind them. A closer name can still cover them.");
+            if(gui->BeginTable("FrontRows",ColumnCount,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
+                header(false);
+                for(const auto row:RowOrder){
+                    rowName(row);
+                    for(int c=0;c<ColumnCount;++c){
+                        const unsigned bit=Columns[c].bit;
+                        if(!bit)continue;
+                        gui->TableNextColumn();
+                        if(!(RowColumns[row]&bit)){gui->TextDisabled("-");continue;}
+                        bool on=(options_.front[row]&bit)!=0;
+                        gui->PushID(static_cast<int>(row)*32+c);
+                        if(gui->Checkbox("##front",&on)){options_.front[row]^=bit;changed=true;}
+                        gui->PopID();
+                    }
+                }
+                gui->EndTable();
+            }
+            gui->EndTabItem();
+            }
+            if(gui->BeginTabItem("Combat")){
+            gui->SeparatorText("Damage numbers");
+            changed=gui->Checkbox("Resize damage numbers",&options_.damageEnabled)||changed;
+            tip("Off: the game's own size. The game's animation, colors and font are kept either way. Moving Size or Width turns this on.");
+            if(damageFault.load()){
+                gui->TextWrapped("Resizing damage numbers isn't available right now; another plugin may be changing them.");
+                if(gui->Button("Try again"))damageRetry_=true;
+            }
+            if(percent("Size##damage",options_.damageScale,25,300)){options_.damageEnabled=true;changed=true;}
+            tip("Overall size of damage numbers.");
+            if(percent("Width##damage",options_.damageWidth,25,300)){options_.damageEnabled=true;changed=true;}
+            tip("Makes damage numbers narrower or wider; their height stays the same.");
+            const bool canFit=widescreen("Fix widescreen stretch##damage",ApplyDamageSizing);
+            gui->SameLine();
+            if(gui->Button("Reset damage numbers")){
+                options_.damageEnabled=false;options_.damageCorrectAspect=false;
+                options_.damageScale=1;options_.damageWidth=1;changed=true;
+            }
+            tip("Back to the game's own damage numbers.");
+            if(!canFit)gui->TextDisabled("Screen size unknown, so the widescreen fix is unavailable.");
+            gui->SeparatorText("Experience");
+            changed=gui->Checkbox("Show points gained at your name",&options_.scrollXp)||changed;
+            tip("Experience, limit, capacity and exemplar points you earn float down from your name and fade over 3 seconds.");
             gui->EndTabItem();
             }
             gui->EndTabBar();
             }
             if(changed)ChangedVisuals();
-            if(nameFault.load())gui->TextUnformatted("A drawing error disabled replacement. See /nplab status.");
-            if(saveFailed_)gui->TextUnformatted("Settings save pending; retrying while loaded.");
+            if(nameFault.load())gui->TextWrapped("A drawing problem switched names back to the game's own. Choose Restyle names again on the Names tab to retry; /nplab status has details.");
+            if(saveFailed_)gui->TextWrapped("Settings couldn't be saved yet; still trying.");
         }
         const bool editing=gui->IsAnyItemActive();
         gui->End();

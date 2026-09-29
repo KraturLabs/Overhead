@@ -44,24 +44,24 @@ bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned so
     if(soften>2)return fail("Edge softness must be from 0 to 2.");
     Preparation setup;
     const auto dc=setup.dc;
-    if(!dc)return fail("Cannot create font drawing context.");
+    if(!dc)return fail("Windows could not start drawing fonts.");
     LOGFONTW description{};description.lfWeight=FW_BOLD;wcscpy_s(description.lfFaceName,L"Tahoma");
     if(family&&*family){
-        if(std::wcslen(family)>=LF_FACESIZE)return fail("The Windows font family name is too long.");
+        if(std::wcslen(family)>=LF_FACESIZE)return fail("That font's name is too long.");
         wcscpy_s(description.lfFaceName,family);
     }
     if(italic)description.lfItalic=TRUE;
     description.lfHeight=-48;description.lfWidth=0;
     description.lfOutPrecision=OUT_TT_ONLY_PRECIS;description.lfQuality=ANTIALIASED_QUALITY;
     setup.selected=CreateFontIndirectW(&description);
-    if(!setup.selected)return fail("Windows could not create the selected font.");
+    if(!setup.selected)return fail("Windows could not load that font.");
     SelectObject(dc,setup.selected);
     if(!GetTextFaceW(dc,LF_FACESIZE,face)||_wcsicmp(face,description.lfFaceName))
-        return fail("Windows substituted a different font; selection was not applied.");
+        return fail("Windows offered a different font instead, so nothing was changed.");
     wchar_t characters[Characters];WORD indices[Characters];
     for(unsigned i=0;i<Characters;++i)characters[i]=static_cast<wchar_t>(First+i);
     if(GetGlyphIndicesW(dc,characters,Characters,indices,GGI_MARK_NONEXISTING_GLYPHS)==GDI_ERROR)
-        return fail("Cannot read character coverage.");
+        return fail("Could not read which letters that font has.");
     for(unsigned i=0;i<Characters;++i)if(indices[i]==0xFFFF){substituted[i]=true;++substitutions;}
     MAT2 identity{};identity.eM11.value=1;identity.eM22.value=1;
     GLYPHMETRICS capital{};
@@ -75,25 +75,25 @@ bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned so
     }
     setup.fallback=CreateFontW(-48,0,0,0,FW_BOLD,description.lfItalic,FALSE,FALSE,ANSI_CHARSET,
         OUT_TT_ONLY_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,L"Tahoma");
-    if(!setup.fallback)return fail("Cannot create the default font.");
+    if(!setup.fallback)return fail("Could not load Tahoma, the default font.");
     SelectObject(dc,setup.fallback);
     GLYPHMETRICS fallbackCapital{};
     if(GetGlyphOutlineW(dc,L'H',GGO_METRICS,&fallbackCapital,0,nullptr,&identity)==GDI_ERROR||!fallbackCapital.gmBlackBoxY)
-        return fail("Cannot measure the default font.");
+        return fail("Could not measure Tahoma, the default font.");
     if(!capital.gmBlackBoxY)capital=fallbackCapital;
     if(substitutions&&capital.gmBlackBoxY!=fallbackCapital.gmBlackBoxY){
         const auto height=MulDiv(48,static_cast<int>(capital.gmBlackBoxY),static_cast<int>(fallbackCapital.gmBlackBoxY));
         SelectObject(dc,setup.selected);DeleteObject(setup.fallback);
         setup.fallback=CreateFontW(-std::max(1,height),0,0,0,FW_BOLD,description.lfItalic,FALSE,FALSE,ANSI_CHARSET,
             OUT_TT_ONLY_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,L"Tahoma");
-        if(!setup.fallback)return fail("Cannot size the default font.");
+        if(!setup.fallback)return fail("Could not size Tahoma, the default font.");
         SelectObject(dc,setup.fallback);
         if(GetGlyphOutlineW(dc,L'H',GGO_METRICS,&fallbackCapital,0,nullptr,&identity)==GDI_ERROR)
-            return fail("Cannot measure the sized default font.");
+            return fail("Could not measure Tahoma, the default font.");
     }
     WORD fallbackIndices[Characters];
     if(substitutions&&GetGlyphIndicesW(dc,characters,Characters,fallbackIndices,GGI_MARK_NONEXISTING_GLYPHS)==GDI_ERROR)
-        return fail("Cannot read default character coverage.");
+        return fail("Could not read which letters Tahoma has.");
     unit=CapitalHeight/static_cast<float>(capital.gmBlackBoxY);
     baseline=capital.gmptGlyphOrigin.y*unit;
     // Measure first, then pack tallest glyphs first. Alphabetical shelves waste
@@ -104,10 +104,10 @@ bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned so
         const bool substitute=substituted[code-First];
         SelectObject(dc,substitute?setup.fallback:setup.selected);
         const auto index=substitute?fallbackIndices[code-First]:indices[code-First];
-        if(index==0xFFFF)return fail("The default font also lacks a required character.");
+        if(index==0xFFFF)return fail("Neither this font nor Tahoma has every letter needed.");
         auto& r=rasters[code-First];r.code=code;
         r.bytes=GetGlyphOutlineW(dc,index,GGO_GRAY8_BITMAP|GGO_GLYPH_INDEX,&r.metrics,0,nullptr,&identity);
-        if(r.bytes==GDI_ERROR)return fail("Windows cannot rasterize this font's outlines.");
+        if(r.bytes==GDI_ERROR)return fail("Windows could not draw this font's letters.");
     }
     std::sort(std::begin(rasters),std::end(rasters),[](const Raster& a,const Raster& b){
         return a.metrics.gmBlackBoxY>b.metrics.gmBlackBoxY;
@@ -134,13 +134,13 @@ bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned so
         const auto index=substitute?fallbackIndices[code-First]:indices[code-First];
         std::vector<unsigned char> bitmap(bytes);
         if(GetGlyphOutlineW(dc,index,GGO_GRAY8_BITMAP|GGO_GLYPH_INDEX,&metrics,bytes,bitmap.data(),&identity)==GDI_ERROR)
-            return fail("Could not rasterize a font character.");
+            return fail("Windows could not draw one of this font's letters.");
         const auto w=metrics.gmBlackBoxX,h=metrics.gmBlackBoxY,stride=(w+3u)&~3u;
         g.left=metrics.gmptGlyphOrigin.x-static_cast<int>(pad);g.top=-metrics.gmptGlyphOrigin.y-static_cast<int>(pad);
         if(substitute)g.top+=capital.gmptGlyphOrigin.y-fallbackCapital.gmptGlyphOrigin.y;
         g.width=static_cast<int>(w+pad*2);g.height=static_cast<int>(h+pad*2);
         if(penX+g.width+gutter>Sheet){penX=gutter;penY+=rowHeight+gutter;rowHeight=0;}
-        if(g.width+2*gutter>Sheet||penY+g.height+gutter>SheetHeight)return fail("This font's glyphs exceed the font texture space.");
+        if(g.width+2*gutter>Sheet||penY+g.height+gutter>SheetHeight)return fail("This font's letters are too big to fit. Try a lower Outline or Edge softness.");
         g.x=penX;g.y=penY;
         rowHeight=std::max(rowHeight,static_cast<unsigned>(g.height));
         penX+=g.width+gutter;
