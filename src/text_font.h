@@ -7,7 +7,8 @@ namespace text_font {
 constexpr unsigned First=32, Last=126, Characters=Last-First+1;
 // Native name capitals measure 8 units tall (in-game capture, 2026-09-28).
 constexpr float CapitalHeight=8;
-constexpr unsigned Sheet=512, TextureWidth=Sheet*2, TextureHeight=Sheet;
+// Fill sheet left, outline sheet right (u+.5). Tall so heavy fonts with big outlines fit.
+constexpr unsigned Sheet=512, SheetHeight=1024, TextureWidth=Sheet*2, TextureHeight=SheetHeight;
 // Settings UI only: installed scalable font families, as UTF-8 names.
 std::vector<std::string> InstalledFamilies();
 struct Glyph {

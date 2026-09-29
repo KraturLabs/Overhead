@@ -150,6 +150,7 @@ float SmoothedSize(std::uint16_t index,std::uint32_t identity,float live) noexce
 Actions actions;
 // Fixed sizes: level 60%, distance 45% of the name. Traits follow their slider.
 constexpr float LevelScale=.6f,LabelScale=.45f;
+std::atomic<bool> pinIcons{true},pinOnTop{false};
 std::atomic<float> actionScale{.6f},weakScale{1},resistScale{1},traitScale{.8f};
 Levels levels;
 std::atomic<unsigned> traitZone{0}; // Initial SDK zone, then zone-transition packets.
@@ -160,6 +161,7 @@ void PublishVisuals(const Options& options) noexcept {
     autoCheck=options.autoCheck;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;drainRows=options.drainRows;npcFeatures=options.npcFeatures;
+    pinIcons=options.pinIcons;pinOnTop=options.pinOnTop;
     actionScale=options.actionScale;weakScale=options.weakScale;resistScale=options.resistScale;traitScale=options.traitScale;scrollXp=options.scrollXp;
     growTarget=options.growTarget;growFarSize=options.growFarSize;
     damageEnabled.store(options.damageEnabled&&!damageFault.load());
@@ -668,7 +670,19 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     if(member==0&&singleLine&&scrollXp.load(std::memory_order_relaxed)){xpFeed.Read(resources.labels.floating,sceneMillis);}
     // Native formatter 0x97840 already chose, ordered and stacked the icons;
     // only their placement changes, so no status flags are read.
-    if(icons&&(spawnFlags&1)&&singleLine){icons->replace=true;icons->show=showIcons;}
+    if(icons&&(spawnFlags&1)&&singleLine){
+        icons->replace=true;icons->show=showIcons;
+        icons->pin=pinIcons.load(std::memory_order_relaxed);
+        icons->pinOnTop=pinOnTop.load(std::memory_order_relaxed);
+        // Linkshell and bazaar are pinned apart from the priority winner, so both
+        // flags are read directly (native tests 0x976DF bazaar, 0x97875 linkshell).
+        std::uint32_t flags[2]; // Adjacent Render.Flags1 and Flags2, one snapshot.
+        if(showIcons&&icons->pin&&ReadBytes(entity+offsetof(Ashita::FFXI::entity_t,Render)+offsetof(Ashita::FFXI::render_t,Flags1),flags,sizeof(flags))){
+            icons->bazaar=(flags[1]&0x00000200)!=0;
+            icons->linkshell=(flags[0]&0x08000000)!=0
+                &&Read(entity+offsetof(Ashita::FFXI::entity_t,LinkshellColor),icons->linkshellColor);
+        }
+    }
     std::memcpy(input.expansionBase,ExpansionBase,6);std::memcpy(input.expansionCount,ExpansionCount,6);
     std::uint8_t codes[MaxGlyphs];unsigned count=0,nameCount=0;
     if(!ExpandName(input,codes,count,nameCount,icons))return false;
@@ -715,6 +729,9 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     const unsigned readCount=count+(count>nameCount?1u:0u);
     for(unsigned i=0;i<readCount;++i)
         if(!loadGlyph(i<count?codes[i]:std::uint8_t(32)))return false;
+    // A missing pinned glyph drops only that icon.
+    if(icons&&icons->linkshell&&!loadGlyph(LinkshellGlyph))icons->linkshell=false;
+    if(icons&&icons->bazaar&&!loadGlyph(BazaarGlyph))icons->bazaar=false;
     if(resources.level.length||resources.level.reserve){
         bool ready=loadGlyph(32);
         for(const char code:{'L','v','.','0','?'})ready=ready&&loadGlyph(static_cast<std::uint8_t>(code)); // Reserved width.
@@ -886,17 +903,19 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     // letters never cover each other's interiors; a later layer's outline covers
     // the name so overlapping text stays fully outlined. Draw state still batches.
     const auto detail=[&](const Quad& q){return q.textureGroup==TextTexture&&(q.code&0x100u)!=0;};
+    // Pinned name icons go first so the name and its outline cover them.
+    for(unsigned i=0;i<output.count;++i)if((output.quads[i].code&nameplate_lab::UnderCode)&&!emit(output.quads[i]))return fail();
     for(unsigned layer=0;layer<2;++layer){
         if(resources.textOutline){
             for(unsigned i=0;i<output.count;++i){
-                if(output.quads[i].textureGroup!=TextTexture||detail(output.quads[i])!=(layer==1))continue;
+                if(output.quads[i].textureGroup!=TextTexture||(output.quads[i].code&nameplate_lab::UnderCode)||detail(output.quads[i])!=(layer==1))continue;
                 auto q=output.quads[i];
                 for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
                 if(!emit(q))return fail();
             }
         }
         for(unsigned i=0;i<output.count;++i){
-            if(detail(output.quads[i])!=(layer==1))continue;
+            if((output.quads[i].code&nameplate_lab::UnderCode)||detail(output.quads[i])!=(layer==1))continue;
             Quad pieces[2];
             const auto* quads=&output.quads[i];
             unsigned pieceCount=1;
@@ -1296,6 +1315,10 @@ public:
             if(gui->Combo("Rendering",&filter,"Native\0Sharp\0Smooth\0")){options_.filter=static_cast<unsigned>(filter);changed=true;}
             changed=gui->Checkbox("Show name icons",&options_.showStatusIcons)||changed;
             if(gui->IsItemHovered())gui->SetTooltip("Player status icons the game shows by a name, with its own priority and stacking, drawn left of the name. The name and cursor center on the name alone.");
+            changed=gui->Checkbox("Linkshell/bazaar on the name's corners",&options_.pinIcons)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Linkshell on the top-left and bazaar on the bottom-left corner of player names, both shown together. Off: they stay with the other name icons, as the game chooses.");
+            changed=gui->Checkbox("Linkshell/bazaar over the name",&options_.pinOnTop)||changed;
+            if(gui->IsItemHovered())gui->SetTooltip("Off: the name covers the icons. On: the icons cover the name.");
             SizingReference reference;
             const bool canFit=ReadSizingReference(reference);
             gui->BeginDisabled(!canFit);

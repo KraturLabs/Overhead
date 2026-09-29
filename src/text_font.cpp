@@ -140,7 +140,7 @@ bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned so
         if(substitute)g.top+=capital.gmptGlyphOrigin.y-fallbackCapital.gmptGlyphOrigin.y;
         g.width=static_cast<int>(w+pad*2);g.height=static_cast<int>(h+pad*2);
         if(penX+g.width+gutter>Sheet){penX=gutter;penY+=rowHeight+gutter;rowHeight=0;}
-        if(g.width+2*gutter>Sheet||penY+g.height+gutter>Sheet)return fail("This font's glyphs exceed the font texture space.");
+        if(g.width+2*gutter>Sheet||penY+g.height+gutter>SheetHeight)return fail("This font's glyphs exceed the font texture space.");
         g.x=penX;g.y=penY;
         rowHeight=std::max(rowHeight,static_cast<unsigned>(g.height));
         penX+=g.width+gutter;

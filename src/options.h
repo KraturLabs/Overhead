@@ -42,6 +42,8 @@ struct Options : Appearance {
     bool npcFeatures = false; // NPCs keep the native plate unless on.
     bool unclaimedDamagedOnly = false; // Unclaimed row only once the monster is damaged.
     float actionScale = .6f; // Action size.
+    bool pinIcons = true; // Linkshell/bazaar on the name's left corners instead of the prefix.
+    bool pinOnTop = false; // Pinned icons over the name instead of under it.
     float traitScale = .8f; // Trait icons, relative to the name height.
     float weakScale = 1, resistScale = 1; // Weakness/resistance icons, relative to their fixed row height.
     bool scrollXp = false; // Experimental: gained points drift from your name.

@@ -150,6 +150,8 @@ Options LoadOptions(const char* path) noexcept {
     for(unsigned row=0;row<RowCount;++row)
         out.front[row]=readChoice(FrontKeys[row],DefaultFront[row],2047)&RowColumns[row];
     GetPrivateProfileStringA("Nameplates","ActionScale","0.6",text,sizeof(text),path);ParseFactor(text,out.actionScale);
+    out.pinIcons=readChoice("PinIcons",1,1)!=0;
+    out.pinOnTop=readChoice("PinOnTop",0,1)!=0;
     out.mode=readChoice("Mode",3,3);
     // Migrate the former enemy display mode and friendly checkbox only when the
     // new per-category setting has not been saved yet.
@@ -183,13 +185,13 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||as.ec!=std::errc{}||ws.ec!=std::errc{}||rs.ec!=std::errc{}||ts.ec!=std::errc{}||gm.ec!=std::errc{})return false;
     char content[3072]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nTraitScale=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nTraitScale=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\nPinIcons=%u\r\nPinOnTop=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
         value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.drainRows,actionScale,value.scrollXp?1u:0u,
         value.growTarget?1u:0u,growFarSize,value.front[0],value.front[1],value.front[2],value.front[3],
-        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften);
+        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften,value.pinIcons?1u:0u,value.pinOnTop?1u:0u);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;

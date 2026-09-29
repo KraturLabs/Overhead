@@ -8,6 +8,9 @@
 
 namespace nameplate_lab {
 namespace {
+// Pinned corner icons, local name units (letters' capitals are 8).
+constexpr float PinnedIconHeight = 9;
+constexpr float PinnedOffsetX = -2.5f; // Centre left of the name's edge (user-tuned).
 bool finite(float value) noexcept { return std::isfinite(value); }
 float rounded(double value) noexcept { return static_cast<float>(value); }
 bool validGlyph(const Glyph& g) noexcept {
@@ -51,7 +54,7 @@ bool ExpandName(const Input& in, std::uint8_t (&codes)[MaxGlyphs], unsigned& cou
     nameCount = count;
     if (icons && icons->show)
         for (unsigned i = 0; i < prefix; ++i)
-            if (!expand(in.text[i])) return false;
+            if ((!icons->pin || (in.text[i] != LinkshellGlyph && in.text[i] != BazaarGlyph)) && !expand(in.text[i])) return false;
     return true;
 }
 
@@ -137,6 +140,11 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     const float iconStart = start - iconAdvance - gap;
     float detailLeft=iconStart;
     float nameTop=0;bool nameSeen=false; // Topmost name glyph, local units.
+    float nameLeft=0,nameBottom=0;bool nameEdge=false; // Name letter box for the pinned icons.
+    const auto edge=[&](float left,float bottom){
+        if(!nameEdge){nameLeft=left;nameBottom=bottom;nameEdge=true;return;}
+        nameLeft=std::min(nameLeft,left);nameBottom=std::max(nameBottom,bottom);
+    };
     unsigned iconFirst=0,iconEnd=0; // Detached prefix quads.
     // The atlas holds full 0-255 coverage and the native stage doubles vertex alpha:
     // name alpha above 0x80 only clamps partial edge texels solid, stepping slanted
@@ -155,6 +163,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             if(code>32){
                 if(!nameSeen||top<nameTop)nameTop=top;nameSeen=true;
                 detailLeft=std::min(detailLeft,pen+g.left*in.font->unit);
+                if(!detached&&code<142)edge(pen+(g.left+static_cast<int>(in.font->Pad()))*in.font->unit,line+in.font->baseline);
             }
             textQuad(code,pen,line,1,letterColor,0);pen+=glyphAdvance(code);continue;
         }
@@ -179,6 +188,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const float top = rounded(static_cast<double>(g.offsetY + dy) + line);
         const float bottom = rounded(static_cast<double>(rounded(size.height * scale)) + top);
         if(!detached&&(!nameSeen||top<nameTop)){nameTop=top;nameSeen=true;}
+        if(!detached&&code>32&&code<142)edge(left,bottom);
         pen = rounded(advance + pen);
         auto& q = out.quads[out.count++];
         q.code = code; q.textureGroup = g.textureGroup;
@@ -200,7 +210,25 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             };
         }
     }
-    if(iconCount)iconEnd=out.count;
+    // Linkshell and bazaar keep fixed corners, tucked under the name's left edge,
+    // centered on its cap line and baseline; the rest of the prefix is unchanged.
+    bool pinned=false;
+    if(icons&&icons->replace&&icons->show&&icons->pin&&nameSeen&&nameEdge&&(icons->linkshell||icons->bazaar)){
+        if(!iconCount)iconFirst=out.count;
+        pinned=true;
+        const auto pin=[&](std::uint8_t code,float centerX,float centerY,std::uint32_t tint){
+            const auto& g=in.glyphs[code];
+            if(!validGlyph(g))return;
+            const float h=PinnedIconHeight,w=g.height?h*g.width/g.height:h;
+            const float left=centerX-w*.5f*ratio,right=centerX+w*.5f*ratio,top=centerY-h*.5f,bottom=top+h;
+            const auto color=0x80000000u|((tint&255u)<<16)|(tint&0xFF00u)|((tint>>16)&255u);
+            auto& q=out.quads[out.count++];q.code=(icons->pinOnTop?0u:UnderCode)|code;q.textureGroup=g.textureGroup;q.alphaReference=0x60u;
+            for(unsigned v=0;v<4;++v)q.vertices[v]={in.x+in.scaleX*(v&1?right:left),in.y+in.scaleY*(v&2?bottom:top),in.z,1,color,g.uv[v*2],g.uv[v*2+1]};
+        };
+        if(icons->linkshell)pin(LinkshellGlyph,nameLeft+PinnedOffsetX,nameTop,icons->linkshellColor);
+        if(icons->bazaar)pin(BazaarGlyph,nameLeft+PinnedOffsetX,nameBottom,0x80808080u);
+    }
+    if(iconCount||pinned)iconEnd=out.count;
     mark(0,RowShow);
     // Text runs: decorations (0x100|code) stay out of HP bounds/coloring.
     // Scale grows from the run's own baseline; shift moves it down in local units.

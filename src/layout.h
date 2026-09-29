@@ -8,9 +8,9 @@ constexpr unsigned MaxDebuffs = 32;
 constexpr unsigned TraitTextureHeight = 128; // Trait/modifier atlas: 32 px cells, 8 per row.
 constexpr unsigned MaxLabel = 31; // Action names; HP% and distance are shorter.
 constexpr unsigned MaxFloating = 3, MaxFloatText = 20; // Gained points below your name.
-// Name, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5), weakness and
+// Name, pinned linkshell/bazaar, level, traits, debuffs, then HP%, MP, TP (4 each), distance (5), weakness and
 // resistance rows (two bar quads and up to 12 icons each), an action name and the floating point gains.
-constexpr unsigned MaxQuads = MaxGlyphs + 6 + 3 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + 2*(2+12) + MaxLabel + MaxFloating*MaxFloatText;
+constexpr unsigned MaxQuads = MaxGlyphs + 2 + 6 + 3 + 9 + MaxDebuffs + 4 + 4 + 4 + 5 + 2*(2+12) + MaxLabel + MaxFloating*MaxFloatText;
 struct DebuffRow {
     unsigned count=0;
     std::uint16_t effects[MaxDebuffs]{};
@@ -78,6 +78,8 @@ struct Vertex {
 };
 // Set in Quad::code for quads drawn without the depth test, over world geometry.
 constexpr std::uint32_t FrontCode = 0x10000u;
+// Set in Quad::code for quads drawn before everything else, under the name.
+constexpr std::uint32_t UnderCode = 0x20000u;
 constexpr unsigned TextTexture=4;
 struct Quad {
     std::uint32_t code, textureGroup, alphaReference;
@@ -94,7 +96,14 @@ struct Output {
 struct StatusIcons {
     bool replace = false; // Only single-line player names separate the prefix.
     bool show = true;     // False omits the prefix entirely.
+    // Pinned outside the priority prefix, read from entity flags: linkshell over the
+    // name's top-left corner, bazaar over its bottom-left corner.
+    bool linkshell = false, bazaar = false;
+    std::uint32_t linkshellColor = 0;
+    bool pin = true;       // False leaves them in the native prefix like any other icon.
+    bool pinOnTop = false; // Default tucks them under the name.
 };
+constexpr std::uint8_t LinkshellGlyph = 0x92, BazaarGlyph = 0x9C;
 static_assert(sizeof(Glyph) == 44 && sizeof(Vertex) == 28 && sizeof(Quad) == 124);
 // Shared by collection and layout so each needed glyph is read only once.
 bool ExpandName(const Input& input, std::uint8_t (&codes)[MaxGlyphs], unsigned& count,

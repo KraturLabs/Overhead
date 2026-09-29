@@ -42,6 +42,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_tests.cpp")
   target_include_directories(runtime_tests SYSTEM PRIVATE dependencies/sdk)
   target_link_libraries(runtime_tests PRIVATE nameplate_layout)
   target_compile_options(runtime_tests PRIVATE /W4 /WX /fp:strict /arch:SSE2 /guard:cf-)
+  target_link_options(runtime_tests PRIVATE /STACK:4194304)
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_lifecycle_tests.cpp")
