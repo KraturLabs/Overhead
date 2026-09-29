@@ -91,3 +91,7 @@ The build writes `build/Release/overhead.dll`. `prepare-sdk.ps1` downloads the A
 ## Credits
 
 Monster trait data and seven trait icons come from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330) under the [MIT license](licenses/MobDB.txt). The DLL also embeds that license notice.
+
+## License
+
+Overhead is released under the [MIT license](LICENSE).
