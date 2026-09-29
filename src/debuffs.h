@@ -24,7 +24,8 @@ constexpr unsigned DebuffCell(unsigned effect) noexcept {
     return effect<DebuffCells.size()?DebuffCells[effect]:~0u;
 }
 enum class DebuffChange { Add, Remove, Damage, Defeat };
-struct DebuffEvent { std::uint32_t target; DebuffChange change; unsigned effect; unsigned rank=0; unsigned duration=300; bool preserveLonger=false; };
+// ifAbsent: the server says the effect is already on ("no effect"); add it only if untracked.
+struct DebuffEvent { std::uint32_t target; DebuffChange change; unsigned effect; unsigned rank=0; unsigned duration=300; bool preserveLonger=false; bool ifAbsent=false; };
 using DebuffSink=void(*)(void*,const DebuffEvent&);
 // Decode only combat results, not cast/readies. Never modify or block packets.
 void DecodeDebuffs(unsigned packet,const std::uint8_t* data,unsigned size,void* context,DebuffSink sink) noexcept;
@@ -34,6 +35,10 @@ class Debuffs {
         std::atomic<std::uint32_t> id{0};
         // One coherent effect + expiry per load. No native pointers or draw lock.
         std::atomic<std::uint64_t> effects[MaxDebuffs]{};
+        // Movement watch (after Bars): a hold-type effect arms it 0.5 s after landing;
+        // the first draw after that records where the target stood and faced.
+        std::atomic<std::uint32_t> watchFrom{0}, anchoredFor{0}; // Tick ms; anchored when equal.
+        std::atomic<float> anchorX{0}, anchorY{0}, anchorHeading{0};
     } rows_[0x900];
     // Relevant packet writers only (always exclusive); SDK has no serialization contract.
     // Zero-initialized SRW lock keeps the table out of the DLL file, unlike std::mutex.
@@ -41,7 +46,11 @@ class Debuffs {
 public:
     void Clear();
     void Forget(unsigned index,std::uint32_t id);
-    void Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned effect,std::uint32_t now,unsigned rank=0,unsigned duration=300,bool preserveLonger=false);
+    void Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned effect,std::uint32_t now,unsigned rank=0,unsigned duration=300,
+        bool preserveLonger=false,bool ifAbsent=false,std::uint32_t millis=0);
+    // Draw thread, lock-free: moving over 3 yalms on either axis from the recorded
+    // spot ends Sleep, Petrify, Stun and Bind; turning over 10 degrees ends Sleep and Petrify.
+    void Watch(unsigned index,std::uint32_t id,std::uint32_t millis,float x,float y,float heading) noexcept;
     DebuffRow Read(unsigned index,std::uint32_t id,std::uint32_t now) const noexcept;
 };
 }

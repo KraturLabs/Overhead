@@ -1,6 +1,7 @@
 #include "debuffs.h"
 #include "debuff_rules.h"
 #include "packet_bits.h"
+#include <cmath>
 
 namespace nameplate_lab {
 namespace {
@@ -13,6 +14,9 @@ unsigned family(unsigned effect) noexcept {
     if(effect>=448&&effect<=452)return 448;
     return effect;
 }
+// Effects that hold the target in place, and the subset that also stops it turning.
+bool heldInPlace(unsigned effect) noexcept {return effect==2||effect==7||effect==10||effect==11||effect==19||effect==193;}
+bool heldFacing(unsigned effect) noexcept {return effect==2||effect==7||effect==19||effect==193;}
 unsigned procDuration(unsigned effect) noexcept {
     switch(effect){
     case 2:case 19:case 193:return 25;
@@ -70,6 +74,17 @@ void message(void* context,DebuffSink sink,std::uint32_t target,unsigned msg,uns
         duration=value==1?60:value==2?90:120;
         value=(msg==591?448:386+(msg-519)*5)+(value>5?4:value-1);
         change=DebuffChange::Add;break;
+    case 655: // Complete resist / immune: the spell's effect is not on the target.
+        value=actionRule(category,spell).effect;
+        if(!value)return;
+        change=DebuffChange::Remove;break;
+    case 75:case 156:case 189:case 283:case 323: // No effect: already on. Never refreshes a timer.
+        {
+            const auto rule=actionRule(category,spell);
+            if(!rule.effect||DebuffCell(rule.effect)==~0u)return;
+            sink(context,{target,DebuffChange::Add,rule.effect,0,rule.seconds?rule.seconds:procDuration(rule.effect),false,true});
+        }
+        return;
     case 64:case 83:case 123:case 159:case 168:case 204:case 206:case 321:case 322:
     case 341:case 342:case 343:case 344:case 350:case 378:case 453:
     case 531:case 647:case 805:case 806:
@@ -136,7 +151,8 @@ void Debuffs::Forget(unsigned index,std::uint32_t id){
     const std::lock_guard lock(mutex_);
     if(rows_[index].id.load()==id)rows_[index].id.store(0,std::memory_order_release);
 }
-void Debuffs::Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned effect,std::uint32_t now,unsigned rank,unsigned duration,bool preserveLonger){
+void Debuffs::Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned effect,std::uint32_t now,unsigned rank,unsigned duration,
+    bool preserveLonger,bool ifAbsent,std::uint32_t millis){
     if(index>=0x900||!id)return;
     const std::lock_guard lock(mutex_);
     auto& row=rows_[index];
@@ -148,6 +164,19 @@ void Debuffs::Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned
     }
     if(change==DebuffChange::Defeat){row.id.store(0,std::memory_order_release);return;}
     if(change==DebuffChange::Add&&DebuffCell(effect)==~0u)return;
+    if(change==DebuffChange::Add&&ifAbsent)for(const auto& item:row.effects){
+        const auto value=item.load(std::memory_order_relaxed);
+        if(alive(value,now)&&family(static_cast<unsigned>(value)&0xFFFF)==family(effect))return;
+    }
+    // Elemental damage-over-time: each overwrites the one its element beats
+    // (Burn>Frost>Choke>Rasp>Shock>Drown>Burn, per client spell data).
+    if(change==DebuffChange::Add&&effect>=128&&effect<=133){
+        const unsigned beaten=effect==133?128:effect+1;
+        for(auto& item:row.effects)
+            if((static_cast<unsigned>(item.load(std::memory_order_relaxed))&0xFFFF)==beaten)item.store(0,std::memory_order_relaxed);
+    }
+    // A newly held target gets a fresh watch; 0 is reserved for "no watch".
+    if(change==DebuffChange::Add&&heldInPlace(effect))row.watchFrom.store((millis+500)|1,std::memory_order_release);
     // Keep only the winning observed Dia/Bio. Earlier, unseen effects remain unknown.
     if(change==DebuffChange::Add&&rank)for(auto& item:row.effects){
         const auto value=item.load(std::memory_order_relaxed);
@@ -171,6 +200,32 @@ void Debuffs::Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned
     }
     if(change==DebuffChange::Add&&available<MaxDebuffs)
         row.effects[available].store((std::uint64_t(now+duration)<<32)|(rank<<16)|effect,std::memory_order_relaxed);
+}
+void Debuffs::Watch(unsigned index,std::uint32_t id,std::uint32_t millis,float x,float y,float heading) noexcept {
+    if(index>=0x900||!id)return;
+    auto& row=rows_[index];
+    if(row.id.load(std::memory_order_acquire)!=id)return;
+    const auto from=row.watchFrom.load(std::memory_order_acquire);
+    if(!from||static_cast<std::int32_t>(millis-from)<0)return;
+    if(row.anchoredFor.load(std::memory_order_relaxed)!=from){
+        row.anchorX.store(x,std::memory_order_relaxed);row.anchorY.store(y,std::memory_order_relaxed);
+        row.anchorHeading.store(heading,std::memory_order_relaxed);
+        row.anchoredFor.store(from,std::memory_order_release);
+        return;
+    }
+    constexpr float Moved=3,Turned=10*3.14159265f/180,Tau=2*3.14159265f;
+    const bool moved=std::fabs(x-row.anchorX.load(std::memory_order_relaxed))>Moved
+        ||std::fabs(y-row.anchorY.load(std::memory_order_relaxed))>Moved;
+    float turn=std::fmod(std::fabs(heading-row.anchorHeading.load(std::memory_order_relaxed)),Tau);
+    if(turn>Tau/2)turn=Tau-turn;
+    const bool turned=turn>Turned;
+    if(!moved&&!turned)return;
+    // Compare-exchange: a newer packet write to the same slot wins over this clear.
+    for(auto& item:row.effects){
+        auto value=item.load(std::memory_order_relaxed);
+        const auto effect=static_cast<unsigned>(value)&0xFFFF;
+        if(value&&(moved?heldInPlace(effect):heldFacing(effect)))item.compare_exchange_strong(value,0,std::memory_order_relaxed);
+    }
 }
 DebuffRow Debuffs::Read(unsigned index,std::uint32_t id,std::uint32_t now) const noexcept {
     DebuffRow result;

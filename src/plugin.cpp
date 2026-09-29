@@ -235,7 +235,7 @@ void RefreshDetailTarget() noexcept {
         if(Read(controller+sizeof(target),target)&&target.IsActive)sceneCursorTargets[1]={target.Index,target.ServerId};
     }
 }
-struct CombatContext { std::uint32_t now; IParty* party; IResourceManager* resources; };
+struct CombatContext { std::uint32_t now; IParty* party; IResourceManager* resources; std::uint32_t millis=0; };
 // Jobs with MP: WHM BLM RDM PLD DRK SMN BLU SCH GEO RUN.
 bool MagicJob(unsigned job) noexcept {
     return job==3||job==4||job==5||job==7||job==8||job==15||job==16||job==20||job==21||job==22;
@@ -295,7 +295,8 @@ void ReceiveDebuff(void* context,const DebuffEvent& event) {
     const auto& state=*static_cast<CombatContext*>(context);
     // Only alliance lacks an authoritative status list.
     const auto index=ObservedIndex(event.target,state.party,6,true);
-    if(index<0x900)debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank,event.duration,event.preserveLonger);
+    if(index<0x900)debuffs.Apply(index,event.target,event.change,event.effect,state.now,event.rank,event.duration,
+        event.preserveLonger,event.ifAbsent,state.millis);
 }
 // Enemies, you, party and alliance (including trusts). Names resolve once, here.
 void ReceiveAction(void* context,const ActionEvent& event) {
@@ -577,7 +578,16 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     }
     if(preview){if(debuffTexture.value)resources.debuffs={5,{3,4,5,6,13}};}
     else if((features&ShowDebuffs)&&debuffTexture.value){
-        if(enemy)resources.debuffs=debuffs.Read(entityIndex,identity,sceneSeconds);
+        if(enemy){
+            // Bars-style: a held target that walks or turns has broken free.
+            float position[2]{},heading=0;
+            if(Read(entity+offsetof(Ashita::FFXI::entity_t,Movement)+offsetof(Ashita::FFXI::movement_t,LocalPosition),position[0])
+                &&Read(entity+offsetof(Ashita::FFXI::entity_t,Movement)+offsetof(Ashita::FFXI::movement_t,LocalPosition)+offsetof(Ashita::FFXI::position_t,Y),position[1])
+                &&Read(entity+offsetof(Ashita::FFXI::entity_t,Heading),heading)
+                &&std::isfinite(position[0])&&std::isfinite(position[1])&&std::isfinite(heading))
+                debuffs.Watch(entityIndex,identity,sceneMillis,position[0],position[1],heading);
+            resources.debuffs=debuffs.Read(entityIndex,identity,sceneSeconds);
+        }
         else if(member<18)resources.debuffs=sceneMembers[member].row;
     }
     if(resources.debuffs.count){
@@ -1045,8 +1055,9 @@ public:
         // blocks it later. Observation never changes the packet/block result.
         if(id==0x028||id==0x029){
             auto* memory=core_?core_->GetMemoryManager():nullptr;
-            CombatContext context{static_cast<std::uint32_t>(GetTickCount64()/1000),memory?memory->GetParty():nullptr,
-                core_?core_->GetResourceManager():nullptr};
+            const auto tick=GetTickCount64();
+            CombatContext context{static_cast<std::uint32_t>(tick/1000),memory?memory->GetParty():nullptr,
+                core_?core_->GetResourceManager():nullptr,static_cast<std::uint32_t>(tick)};
             DecodeDebuffs(id,data,size,&context,ReceiveDebuff);
             if(AnyRows(ShowAction))DecodeActions(id,data,size,&context,ReceiveAction);
         }
