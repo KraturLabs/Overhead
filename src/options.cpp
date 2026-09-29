@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace nameplate_lab {
+namespace overhead {
 bool ParseFactor(const char* text, float& value) noexcept {
     if (!text) return false;
     while (*text==' ' || *text=='\t') ++text;

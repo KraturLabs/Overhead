@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace nameplate_lab {
+namespace overhead {
 // One-frame clearance supplied by overhead content, in render-buffer pixels.
 // The producer includes only content intersecting this arrow's column.
 // No actor pointer survives the draw that supplied it.

@@ -1,4 +1,4 @@
-LIBRARY nameplatelab
+LIBRARY overhead
 EXPORTS
     expCreatePlugin=_CreatePlugin@4
     expDestroyPlugin=_DestroyPlugin@4

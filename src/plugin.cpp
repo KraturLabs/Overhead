@@ -51,7 +51,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 }
 
 namespace {
-using namespace nameplate_lab;
+using namespace overhead;
 constexpr char Version[]="0.9.32";
 text_font::Font textFont;
 IDirect3DTexture8* textTexture=nullptr;
@@ -791,7 +791,7 @@ bool ReadSizingReference(SizingReference& reference) noexcept {
 
 // Icons use the full screen correction instead of Width, so only letters follow
 // Width. Legacy correction or an unreadable display keeps icons with the letters.
-bool IconRatio(nameplate_lab::Input& input,const Appearance& visuals) noexcept {
+bool IconRatio(overhead::Input& input,const Appearance& visuals) noexcept {
     SizingReference reference;
     input.iconRatio=!visuals.correctAspect&&visuals.width>0&&ReadSizingReference(reference)?reference.width/visuals.width:1;
     return true;
@@ -895,7 +895,7 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     if(!progress.Check(device->SetRenderState(D3DRS_ALPHABLENDENABLE,TRUE),"Set ALPHABLENDENABLE")
         ||!progress.Check(device->SetVertexShader(0x144),"SetVertexShader"))return fail();
     const auto emit=[&](const Quad& q){
-        const bool front=(q.code&nameplate_lab::FrontCode)!=0;
+        const bool front=(q.code&overhead::FrontCode)!=0;
         if(front!=zFront||q.textureGroup!=group||q.alphaReference!=alpha||batched==BatchQuads){
             if(!flush()||!setFront(front))return false;
             if(q.textureGroup!=group){
@@ -920,21 +920,21 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
     // the name so overlapping text stays fully outlined. Draw state still batches.
     const auto layerOf=[&](const Quad& q)->unsigned{
         if(q.textureGroup!=TextTexture||!(q.code&0x100u))return 0;
-        return q.code&nameplate_lab::TopCode?2:1;
+        return q.code&overhead::TopCode?2:1;
     };
     // Pinned name icons go first so the name and its outline cover them.
-    for(unsigned i=0;i<output.count;++i)if((output.quads[i].code&nameplate_lab::UnderCode)&&!emit(output.quads[i]))return fail();
+    for(unsigned i=0;i<output.count;++i)if((output.quads[i].code&overhead::UnderCode)&&!emit(output.quads[i]))return fail();
     for(unsigned layer=0;layer<3;++layer){
         if(resources.textOutline){
             for(unsigned i=0;i<output.count;++i){
-                if(output.quads[i].textureGroup!=TextTexture||(output.quads[i].code&nameplate_lab::UnderCode)||layerOf(output.quads[i])!=layer)continue;
+                if(output.quads[i].textureGroup!=TextTexture||(output.quads[i].code&overhead::UnderCode)||layerOf(output.quads[i])!=layer)continue;
                 auto q=output.quads[i];
                 for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
                 if(!emit(q))return fail();
             }
         }
         for(unsigned i=0;i<output.count;++i){
-            if((output.quads[i].code&nameplate_lab::UnderCode)||layerOf(output.quads[i])!=layer)continue;
+            if((output.quads[i].code&overhead::UnderCode)||layerOf(output.quads[i])!=layer)continue;
             Quad pieces[2];
             const auto* quads=&output.quads[i];
             unsigned pieceCount=1;
@@ -953,11 +953,11 @@ extern "C" {
 unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
     unsigned result=0;
     if(mode.load(std::memory_order_acquire)){
-        nameplate_lab::Input input{};nameplate_lab::Output output;Resources resources{};StatusIcons icons;
+        overhead::Input input{};overhead::Output output;Resources resources{};StatusIcons icons;
         DebuffBounds bounds;
         const auto visuals=Visuals();
         if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&IconRatio(input,visuals)&&GrowName(input,resources.grow)
-            &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds,&resources.labels)){
+            &&overhead::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds,&resources.labels)){
             // Once drawing starts, do not redraw the original on top of a partial
             // replacement. A device error turns the feature off for future names.
             result=1;
@@ -1049,7 +1049,7 @@ class Plugin final:public IPlugin {
         const bool success=settingsPath_[0]&&!error&&SaveOptions(settingsPath_,options_);
         if(success){dirty_=false;saveFailed_=false;nextSave_=0;return;}
         nextSave_=GetTickCount64()+5000;
-        if(!saveFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Settings save failed; changes remain pending and will be retried.");
+        if(!saveFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Settings save failed; changes remain pending and will be retried.");
         saveFailed_=true;
     }
     void SelectMode(unsigned value) {
@@ -1062,10 +1062,10 @@ class Plugin final:public IPlugin {
         damageHookAttempted=true;
         if(InstallDamage()){
             damageFault.store(false);PublishVisuals(options_);
-            if(announce&&core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage retry succeeded; adjustments %s.",options_.damageEnabled?"enabled":"off in settings");
+            if(announce&&core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage retry succeeded; adjustments %s.",options_.damageEnabled?"enabled":"off in settings");
         }else {
             damageFault.store(true);damageEnabled.store(false);
-            if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage unavailable: %s. Native damage retained.",lastProblem);
+            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage unavailable: %s. Native damage retained.",lastProblem);
         }
     }
 public:
@@ -1136,7 +1136,7 @@ public:
         core_->GetPacketManager()->AddOutgoingPacket(0x0DD,sizeof(check),check);
         return false;
     }
-    const char* GetName()const override{return "NameplateLab";}
+    const char* GetName()const override{return "Overhead";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Custom-font nameplates with sizing, native icons and enemy HP color fill";}
     double GetVersion()const override{return 0.932;}
@@ -1150,15 +1150,15 @@ public:
         traitTextureResult=traitTexture.Initialize(device);
         debuffTextureResult=debuffTexture.Initialize(device,core_?core_->GetResourceManager():nullptr);
         if(!ApplyFont(device,options_.fontOutline,options_.fontFamily,options_.fontItalic,options_.fontSoften)){
-            if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s Using the default font when available.",fontError_);
+            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] %s Using the default font when available.",fontError_);
             if(options_.fontFamily[0])ApplyFont(device,options_.fontOutline,"",options_.fontItalic,options_.fontSoften);
         }
         if(FAILED(traitTextureResult)&&core_)
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Trait artwork unavailable (%08X); names and levels remain available.",static_cast<unsigned>(traitTextureResult));
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Trait artwork unavailable (%08X); names and levels remain available.",static_cast<unsigned>(traitTextureResult));
         return true;
     }
     bool Initialize(IAshitaCore* core,ILogManager*,std::uint32_t)override{
-        if(retainedModule){core->GetChatManager()->Writef(207,false,"[NameplateLab] Previous teardown could not detach safely; restart the game before loading again.");return false;}
+        if(retainedModule){core->GetChatManager()->Writef(207,false,"[Overhead] Previous teardown could not detach safely; restart the game before loading again.");return false;}
         unsigned zero=0;
         if(!instances.compare_exchange_strong(zero,1))return false;
         owns_=true;core_=core;
@@ -1172,11 +1172,11 @@ public:
         const auto party=memory?memory->GetParty():nullptr;
         traitZone.store(party?party->GetMemberZone(0):0);
         const auto module=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"FFXiMain.dll"));
-        if(!DiscoverNative(module)){core_->GetChatManager()->Writef(207,false,"[NameplateLab] Refused: native routine discovery failed or ambiguous.");return false;}
+        if(!DiscoverNative(module)){core_->GetChatManager()->Writef(207,false,"[Overhead] Refused: native routine discovery failed or ambiguous.");return false;}
         ConfigureNative(module);
-        if(!Compatible()){core_->GetChatManager()->Writef(207,false,"[NameplateLab] Refused: %s.",lastProblem);return false;}
+        if(!Compatible()){core_->GetChatManager()->Writef(207,false,"[Overhead] Refused: %s.",lastProblem);return false;}
         const char* root=core_->GetInstallPath();
-        if(root&&_snprintf_s(settingsDirectory_,sizeof(settingsDirectory_),_TRUNCATE,"%s\\config\\nameplatelab",root)>=0
+        if(root&&_snprintf_s(settingsDirectory_,sizeof(settingsDirectory_),_TRUNCATE,"%s\\config\\overhead",root)>=0
             &&_snprintf_s(settingsPath_,sizeof(settingsPath_),_TRUNCATE,"%s\\settings.ini",settingsDirectory_)>=0)
             options_=LoadOptions(settingsPath_);
         else {settingsPath_[0]=0;saveFailed_=true;}
@@ -1210,7 +1210,7 @@ public:
         if(!detached){
             GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
                 reinterpret_cast<LPCWSTR>(&NameplateGate),&retainedModule);
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Unload could not detach safely (%s). Drawing disabled; DLL retained. Restart before replacing it.",lastProblem);
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Unload could not detach safely (%s). Drawing disabled; DLL retained. Restart before replacing it.",lastProblem);
         }
         if(detached){traitTexture.Release();debuffTexture.Release();if(textTexture){textTexture->Release();textTexture=nullptr;}}
         debuffs.Clear();
@@ -1220,8 +1220,8 @@ public:
     }
     bool HandleCommand(std::int32_t,const char* command,bool injected)override{
         (void)injected;
-        if(!command||(_strnicmp(command,"/nplab",6)!=0)||(command[6]&&command[6]!=' '))return false;
-        const char* option=command+6;while(*option==' ')++option;
+        if(!command||(_strnicmp(command,"/overhead",9)!=0)||(command[9]&&command[9]!=' '))return false;
+        const char* option=command+9;while(*option==' ')++option;
         if(!*option||_stricmp(option,"config")==0){window_=!window_;if(!window_)Save();return true;}
         if(_stricmp(option,"game")==0){SelectMode(1);}
         else if(_stricmp(option,"all")==0){SelectMode(2);}
@@ -1230,7 +1230,7 @@ public:
         else if(_strnicmp(option,"autocheck ",10)==0){
             const char* setting=option+10;
             if(_stricmp(setting,"on")==0||_stricmp(setting,"off")==0){options_.autoCheck=_stricmp(setting,"on")==0;ChangedVisuals();}
-            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] autocheck on | off");
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] autocheck on | off");
         }
         else if(const auto column=DetailCommand(option)){
             // Switches one detail column in every row it applies to; the table is finer.
@@ -1239,34 +1239,34 @@ public:
                 for(unsigned row=0;row<RowCount;++row)
                     options_.rows[row]=_stricmp(setting,"on")==0?options_.rows[row]|(column&RowColumns[row]):options_.rows[row]&~column;
                 ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] levels | traits | debuffs | health | mp | tp | distance | actions | weakness | resistance on | off");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] levels | traits | debuffs | health | mp | tp | distance | actions | weakness | resistance on | off");
         }
         else if(_strnicmp(option,"xp ",3)==0){
             if(_stricmp(option+3,"on")==0||_stricmp(option+3,"off")==0){options_.scrollXp=_stricmp(option+3,"on")==0;ChangedVisuals();}
-            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] xp on | off");
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] xp on | off");
         }
         else if(_strnicmp(option,"grow ",5)==0){
             if(_stricmp(option+5,"on")==0||_stricmp(option+5,"off")==0){options_.growTarget=_stricmp(option+5,"on")==0;ChangedVisuals();}
-            else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] grow on | off");
+            else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] grow on | off");
         }
         else if(_strnicmp(option,"hidetarget ",11)==0){
             if(_stricmp(option+11,"on")==0||_stricmp(option+11,"off")==0){
                 options_.hideTarget=_stricmp(option+11,"on")==0;
                 if(options_.hideTarget&&!options_.keepCursor){options_.keepCursor=true;cursorAttempted=false;}
                 ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] hidetarget on | off");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] hidetarget on | off");
         }
         else if(_strnicmp(option,"cursor ",7)==0){
             if(_stricmp(option+7,"on")==0||_stricmp(option+7,"off")==0){
                 options_.keepCursor=_stricmp(option+7,"on")==0;cursorAttempted=false;ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] cursor on | off");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] cursor on | off");
         }
         else if(_strnicmp(option,"icons ",6)==0){
             const char* setting=option+6;
             if(_stricmp(setting,"show")==0||_stricmp(setting,"hide")==0){
                 options_.showStatusIcons=_stricmp(setting,"show")==0;ChangedVisuals();
-                if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Name icons: %s.",options_.showStatusIcons?"native icons detached left; name centered alone":"hidden");
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] icons show | hide");
+                if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Name icons: %s.",options_.showStatusIcons?"native icons detached left; name centered alone":"hidden");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] icons show | hide");
         }
         else if(_strnicmp(option,"damage ",7)==0){
             const char* setting=option+7;
@@ -1274,7 +1274,7 @@ public:
             else if(_stricmp(setting,"fit")==0){
                 SizingReference reference;
                 if(ReadSizingReference(reference)&&ApplyDamageSizing(options_,reference.screenWidth,reference.screenHeight))ChangedVisuals();
-                else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Display resolution unavailable or outside the sizing range; settings unchanged.");
+                else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Display resolution unavailable or outside the sizing range; settings unchanged.");
             }else if(_stricmp(setting,"off")==0){options_.damageEnabled=false;ChangedVisuals();}
             else if(_stricmp(setting,"on")==0){options_.damageEnabled=true;ChangedVisuals();}
             else if(_strnicmp(setting,"size ",5)==0||_strnicmp(setting,"width ",6)==0){
@@ -1282,15 +1282,15 @@ public:
                 if(ParseFactor(setting+(size?5:6),value)){
                     if(size)options_.damageScale=value;else options_.damageWidth=value;
                     options_.damageEnabled=true;ChangedVisuals();
-                }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage size/width requires a factor from 0.25 to 3.");
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] damage fit | size <factor> | width <factor> | on | off | retry");
+                }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage size/width requires a factor from 0.25 to 3.");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] damage fit | size <factor> | width <factor> | on | off | retry");
         }
         else if(_stricmp(option,"fit")==0){
             SizingReference reference;
             if(ReadSizingReference(reference)&&ApplyOriginalSizing(options_,reference.screenWidth,reference.screenHeight)){
                 ChangedVisuals();
-                if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Matched original 4:3 proportions for %ux%u: size 100%%, width %.2f%%. HP/display and filtering retained.",reference.screenWidth,reference.screenHeight,options_.width*100);
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cannot calculate 4:3 sizing from the current resolution; settings unchanged.");
+                if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Matched original 4:3 proportions for %ux%u: size 100%%, width %.2f%%. HP/display and filtering retained.",reference.screenWidth,reference.screenHeight,options_.width*100);
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Cannot calculate 4:3 sizing from the current resolution; settings unchanged.");
         }
         else if(_stricmp(option,"reset")==0){options_=Options{};fontFamily_[0]=0;fontOutline_=3;fontSoften_=0;fontItalic_=false;fontReset_=true;cursorAttempted=false;ChangedVisuals();SelectMode(options_.mode);}
         else if(_strnicmp(option,"size ",5)==0||_strnicmp(option,"width ",6)==0){
@@ -1298,16 +1298,16 @@ public:
             if(ParseFactor(option+(size?5:6),value)){
                 if(size)options_.scale=value;else options_.width=value;
                 ChangedVisuals();
-            }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Use a factor from 0.25 to 3, for example /nplab size 1.2 or /nplab width 0.85.");
+            }else if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Use a factor from 0.25 to 3, for example /overhead size 1.2 or /overhead width 0.85.");
         }
         else if(_stricmp(option,"status")==0){
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Game font":mode.load()>=2?"Custom font":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Name icons: %s.",options_.showStatusIcons?"detached left":"hidden");
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /nplab damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
-            if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
-        }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions|weakness|resistance on|off | damage <setting> | reset | status");
+            core_->GetChatManager()->Writef(207,false,"[Overhead %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Game font":mode.load()>=2?"Custom font":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Name icons: %s.",options_.showStatusIcons?"detached left":"hidden");
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /overhead damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
+            if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[Overhead] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
+        }else core_->GetChatManager()->Writef(207,false,"[Overhead] /overhead (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions|weakness|resistance on|off | damage <setting> | reset | status");
         Save();
         return true;
     }
@@ -1322,7 +1322,7 @@ public:
         for(const auto* tab:Tabs)tabRow+=gui->CalcTextSize(tab).x+style.FramePadding.x*2+style.ItemInnerSpacing.x;
         gui->SetNextWindowSize(ImVec2(430,0),ImGuiCond_FirstUseEver);
         gui->SetNextWindowSizeConstraints(ImVec2(tabRow,0),ImVec2(1e5f,1e5f));
-        if(gui->Begin("NameplateLab",&window_,ImGuiWindowFlags_AlwaysAutoResize)){
+        if(gui->Begin("Overhead",&window_,ImGuiWindowFlags_AlwaysAutoResize)){
             bool changed=false;
             // Tooltips wrap at a readable width instead of running on as one line.
             const auto tip=[&](const char* text){
@@ -1437,7 +1437,7 @@ public:
             if(gui->Checkbox("Keep the arrow over your target",&options_.keepCursor)){cursorAttempted=false;changed=true;}
             tip("The game's bouncing arrow over your target goes away when the target window is hidden. This keeps it, with its usual animation and colors.");
             if(options_.keepCursor&&cursorAttempted&&!cursorReady)
-                gui->TextWrapped("The arrow isn't available right now; another plugin or addon may be handling it. /nplab status shows why.");
+                gui->TextWrapped("The arrow isn't available right now; another plugin or addon may be handling it. /overhead status shows why.");
             if(restyled){
             gui->SeparatorText("Player icons");
             changed=gui->Checkbox("Show player status icons",&options_.showStatusIcons)||changed;
@@ -1606,7 +1606,7 @@ public:
             gui->EndTabBar();
             }
             if(changed)ChangedVisuals();
-            if(nameFault.load())gui->TextWrapped("A drawing problem switched names back to the game's own. Choose Restyle names again on the Names tab to retry; /nplab status has details.");
+            if(nameFault.load())gui->TextWrapped("A drawing problem switched names back to the game's own. Choose Restyle names again on the Names tab to retry; /overhead status has details.");
             if(saveFailed_)gui->TextWrapped("Settings couldn't be saved yet; still trying.");
         }
         const bool editing=gui->IsAnyItemActive();
@@ -1640,16 +1640,16 @@ public:
         }
         if(keepCursor&&!cursorAttempted){
             cursorAttempted=true;
-            if(!InstallCursor()){cursorReady=false;keepCursor=false;if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor unavailable: %s",cursorProblem);}
+            if(!InstallCursor()){cursorReady=false;keepCursor=false;if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Cursor unavailable: %s",cursorProblem);}
         }
         if(saveFailed_)Save();
         if(damageHooked&&!damageFault.load()&&!OwnsDamageHook()){
             damageEnabled.store(false);damageFault.store(true);damageRetry_=false;
-            if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage adjustments disabled: %s. Names unaffected.",lastProblem);
+            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage adjustments disabled: %s. Names unaffected.",lastProblem);
         }
         if(mode.load()&&!OwnsNameHook()){
             requested.store(0);mode.store(0);
-            if(!compatibilityFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Replacement disabled: %s.",lastProblem);
+            if(!compatibilityFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Replacement disabled: %s.",lastProblem);
             compatibilityFailed_=true;return;
         }
         compatibilityFailed_=false;
@@ -1664,7 +1664,7 @@ public:
         if(!next){mode.store(0);return;}
         if(!Install()){
             requested.store(0);mode.store(0);
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Original retained: %s.",lastProblem);return;
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Original retained: %s.",lastProblem);return;
         }
         mode.store(next,std::memory_order_release);
     }

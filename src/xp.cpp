@@ -1,7 +1,7 @@
 #include "xp.h"
 #include <utility>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 constexpr std::uint32_t Colors[]={0,0x807040u,0x5A7080u,0x806080u,0x607850u}; // Half intensity.
 constexpr const char* Units[]={"","XP","LP","CP","EP"};

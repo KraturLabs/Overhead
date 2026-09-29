@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 #include "trait_atlas.inc"
 }

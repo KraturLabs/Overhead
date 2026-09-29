@@ -5,7 +5,7 @@
 #include <shared_mutex>
 #include "layout.h"
 
-namespace nameplate_lab {
+namespace overhead {
 // Packet-learned values only. No entity pointers or persistent disk cache.
 class Levels {
     static constexpr unsigned Slots = 0x900;

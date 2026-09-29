@@ -3,7 +3,7 @@
 #include "packet_bits.h"
 #include <cmath>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 bool alive(std::uint64_t value,std::uint32_t now) noexcept {
     return value&&static_cast<std::int32_t>(static_cast<std::uint32_t>(value>>32)-now)>0;

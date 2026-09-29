@@ -3,7 +3,7 @@
 #include <cstring>
 #include <iterator>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 struct TraitRow { const char* name; std::uint16_t bits, index, weak, resist; };
 struct TraitZone { unsigned nameFirst, nameCount, indexFirst, indexCount; };

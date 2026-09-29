@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 // Pinned corner icons, local name units (letters' capitals are 8).
 constexpr float PinnedIconHeight = 9;

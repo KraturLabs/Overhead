@@ -1,7 +1,7 @@
 #pragma once
 #include "layout.h"
 
-namespace nameplate_lab {
+namespace overhead {
 // Plate categories: a name uses the first row it matches. Each row holds the
 // details shown for it; RowShow switches the whole row.
 enum DetailRow : unsigned { RowTarget, RowSelf, RowParty, RowClaimedSelf, RowClaimedParty, RowClaimedOther, RowUnclaimed, RowOtherPlayers, RowCount };

@@ -2,7 +2,7 @@
 #include <array>
 #include <cstdint>
 
-namespace nameplate_lab {
+namespace overhead {
 // Numeric spell/status metadata from client resources. Base expiry estimates
 // follow the selected XIUI retail policy; no caster bonus or resist inference.
 struct DebuffSpell { std::uint16_t effect=0,seconds=0; };

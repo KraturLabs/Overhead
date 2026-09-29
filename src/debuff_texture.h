@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace nameplate_lab {
+namespace overhead {
 // SDK Bitmap starts at BITMAPINFOHEADER. The supported client supplies 32x32
 // bottom-up BGRA or paletted pixels, natively with 0..128 alpha.
 inline bool DecodeStatusBitmap(const std::uint8_t* bytes,unsigned length,std::uint32_t (&pixels)[1024]) noexcept {

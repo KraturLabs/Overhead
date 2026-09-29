@@ -1,7 +1,7 @@
 #pragma once
 #include "layout.h"
 
-namespace nameplate_lab {
+namespace overhead {
 // tint: RGB for the remaining (undepleted) letters; 0 keeps the native color.
 struct HealthFill { float boundary = 0; bool enabled = false; std::uint32_t tint = 0; };
 // FFXI HP warning bands, softened: white, then light yellow below 75%, light

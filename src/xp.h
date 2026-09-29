@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "layout.h"
 
-namespace nameplate_lab {
+namespace overhead {
 // Points you gain (0x02D, sender and target both you), shown drifting down
 // below your own name. One packet writer; drawing uses atomic loads.
 enum XpKind : unsigned { XpExperience=1, XpLimit, XpCapacity, XpExemplar };

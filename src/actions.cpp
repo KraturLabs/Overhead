@@ -2,7 +2,7 @@
 #include "packet_bits.h"
 #include <cstring>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 constexpr std::uint32_t LostResultSeconds=30,LingerSeconds=4;
 // Failure result messages (LandSandBoat xi.msg.basic, plus Bars' miss/resist/no-effect set).

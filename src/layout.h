@@ -2,7 +2,7 @@
 #include <cstdint>
 namespace text_font {struct Font;}
 
-namespace nameplate_lab {
+namespace overhead {
 constexpr unsigned MaxGlyphs = 36;
 constexpr unsigned MaxDebuffs = 32;
 constexpr unsigned TraitTextureHeight = 128; // Trait/modifier atlas: 32 px cells, 8 per row.

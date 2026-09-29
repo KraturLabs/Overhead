@@ -5,7 +5,7 @@
 #include <shared_mutex>
 #include "layout.h"
 
-namespace nameplate_lab {
+namespace overhead {
 enum class ActionChange { Start, Instant, Finish, Clear };
 enum ActionResult : unsigned { ActionNeutral, ActionSuccess, ActionFailure };
 // Half-intensity soft green / soft red / white under native doubled modulation.

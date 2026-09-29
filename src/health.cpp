@@ -3,7 +3,7 @@
 #include <cmath>
 #include <limits>
 
-namespace nameplate_lab {
+namespace overhead {
 namespace {
 void dim(Quad& q) noexcept {
     for (auto& v : q.vertices) {

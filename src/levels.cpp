@@ -1,7 +1,7 @@
 #include "levels.h"
 #include <cstring>
 
-namespace nameplate_lab {
+namespace overhead {
 void Levels::Clear() {
     const std::lock_guard lock(mutex_);
     for(unsigned i=0;i<Slots;++i){values_[i].store(0,std::memory_order_relaxed);scanned_[i].store(0,std::memory_order_relaxed);requests_[i]={};}
