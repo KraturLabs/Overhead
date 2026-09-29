@@ -99,7 +99,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         const auto& g = in.glyphs[code];
         if (!available(code)) return false;
         if(i<nameCount&&!textReference&&code>32&&code<142){
-            textReference=true;textHeight=custom(code)?12.f:static_cast<float>(g.height);textTop=custom(code)?0.f:static_cast<float>(g.offsetY);
+            textReference=true;textHeight=custom(code)?text_font::CapitalHeight:static_cast<float>(g.height);textTop=custom(code)?0.f:static_cast<float>(g.offsetY);
         }
         if(custom(code)){
             total+=glyphAdvance(code)+(i?kern(codes[i-1],code):0);continue;

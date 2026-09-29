@@ -94,7 +94,7 @@ bool Font::Prepare(unsigned border,const wchar_t* family,bool italic,unsigned so
     WORD fallbackIndices[Characters];
     if(substitutions&&GetGlyphIndicesW(dc,characters,Characters,fallbackIndices,GGI_MARK_NONEXISTING_GLYPHS)==GDI_ERROR)
         return fail("Cannot read default character coverage.");
-    unit=12.f/static_cast<float>(capital.gmBlackBoxY);
+    unit=CapitalHeight/static_cast<float>(capital.gmBlackBoxY);
     baseline=capital.gmptGlyphOrigin.y*unit;
     // Measure first, then pack tallest glyphs first. Alphabetical shelves waste
     // enough vertical space to reject wide fonts with a thick outline.
