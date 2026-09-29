@@ -56,7 +56,7 @@ If upgrading from the old resident-loader version, exit the game once before rep
 
 The settings window has five tabs:
 
-- **Names**: which names are restyled (**Restyle names**: Off, My name only or All names), Size, Width, **Fix widescreen stretch**, the target options (**Enlarge far-away target**, **Hide the game's target window**, **Keep the arrow over your target**) and player icons.
+- **Names**: which names are restyled (**Restyle names**: Off, Game font or Custom font; Game font keeps the game's own letters with all the extras), Size, Width, **Fix widescreen stretch**, the target options (**Enlarge far-away target**, **Hide the game's target window**, **Keep the arrow over your target**) and player icons.
 - **Font**: font, italic, outline, edge softness and **Letter scaling**.
 - **Details**: the table of what shows on each kind of name (see below), **Show details on targeted NPCs**, **Unclaimed monsters: only after they take damage** and **Automatically check monster levels**.
 - **Detail style**: **Preview on your target and yourself**, sizes for aggro icons, weaknesses, resistances, debuff icons and action text, and the **Draw in front of scenery** table (which parts of each kind of name show through bodies and scenery).
@@ -180,7 +180,7 @@ TP (percent of 1000 TP, as in BattleSight; soft blue) and MP (percent, soft gree
 
 ### Party HP depletion and softer HP colors (0.9.11)
 
-The **HP bar** column in the Details table dims the lost-health portion of the name independently for each row, separately from the HP% label. Your former friendly/enemy HP settings migrate into these checkboxes; Other players starts off. **Restyle names** chooses Off, My name only or All names, while this column controls depletion. `/nplab hp` enables the target/enemy drain rows and all-name display; `/nplab all` retains your row choices. Below 75% the remaining letters take the HP% band color; at 75% and above they keep the native name color. HP% bands are softened: light yellow below 75%, light orange below 50%, light red below 25%. TP now reads as a percent (TP / 10), matching BattleSight.
+The **HP bar** column in the Details table dims the lost-health portion of the name independently for each row, separately from the HP% label. Your former friendly/enemy HP settings migrate into these checkboxes; Other players starts off. **Restyle names** chooses Off, Game font or Custom font, while this column controls depletion. `/nplab hp` enables the target/enemy drain rows and all-name display; `/nplab all` (custom font) and `/nplab game` (game font) retain your row choices. Below 75% the remaining letters take the HP% band color; at 75% and above they keep the native name color. HP% bands are softened: light yellow below 75%, light orange below 50%, light red below 25%. TP now reads as a percent (TP / 10), matching BattleSight.
 
 ### Widescan levels and hiding the target window (0.9.13)
 

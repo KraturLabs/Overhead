@@ -88,11 +88,10 @@ std::atomic<bool> damageFault{false};
 std::atomic<bool> damageEnabled{false},damageCorrectAspect{false};
 std::atomic<float> damageScale{1},damageWidth{1};
 std::atomic<unsigned> damageAdjusted{0},damageRejected{0};
-std::atomic<unsigned> mode{0}, requested{0}, instances{0}; // 0 original, 1 self, 2 all, 3 enemy HP.
+std::atomic<unsigned> mode{0}, requested{0}, instances{0}; // 0 original, 1 all in the game's font, 2/3 all in the custom font.
 std::atomic<unsigned> replaced{0}, rejected{0}, drawingErrors{0};
-std::atomic<unsigned> healthNames{0}, filteredNames{0};
+std::atomic<unsigned> healthNames{0};
 std::atomic<bool> nameFault{false};
-bool intentionallyFiltered=false;
 std::atomic<float> nameScale{1}, nameWidth{1};
 std::atomic<bool> correctAspect{true};
 std::atomic<unsigned> nameFilter{2};
@@ -526,11 +525,6 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     std::uint16_t entityIndex=0;
     if(!Read(entity+0x74,entityIndex)||entityIndex>=0x900
         ||!Read(clientBase+native.entities+entityIndex*4,current)||current!=entity)return false;
-    if(mode.load(std::memory_order_relaxed)==1){
-        std::uint16_t playerIndex=0;
-        if(!Read(clientBase+native.playerIndex,playerIndex)||!playerIndex)return false;
-        if(entityIndex!=playerIndex){intentionallyFiltered=true;return false;}
-    }
     std::uint32_t spawnFlags=0;
     if(!Read(entity+offsetof(Ashita::FFXI::entity_t,SpawnFlags),spawnFlags))return false;
     const bool enemy=(spawnFlags&EnemyFlag)&&!(spawnFlags&FriendlyFlags);
@@ -694,7 +688,7 @@ bool Collect(std::uintptr_t frame,Input& input,Resources& resources,StatusIcons*
     std::memcpy(input.expansionBase,ExpansionBase,6);std::memcpy(input.expansionCount,ExpansionCount,6);
     std::uint8_t codes[MaxGlyphs];unsigned count=0,nameCount=0;
     if(!ExpandName(input,codes,count,nameCount,icons))return false;
-    input.font=singleLine&&textTexture?&textFont:nullptr;
+    input.font=singleLine&&textTexture&&mode.load(std::memory_order_relaxed)>=2?&textFont:nullptr;
     if(input.font){resources.textures[TextTexture]=textTexture;resources.textOutline=textFont.outline!=0;}
     std::uint32_t fontData[12]{},table=0;
     const auto loadGlyph=[&](std::uint8_t code){
@@ -945,7 +939,6 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
         nameplate_lab::Input input{};nameplate_lab::Output output;Resources resources{};StatusIcons icons;
         DebuffBounds bounds;
         const auto visuals=Visuals();
-        intentionallyFiltered=false;
         if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&IconRatio(input,visuals)&&GrowName(input,resources.grow)
             &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds,&resources.labels)){
             // Once drawing starts, do not redraw the original on top of a partial
@@ -962,8 +955,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
                 replaced.fetch_add(1,std::memory_order_relaxed);
                 if(resources.healthPercent<100)healthNames.fetch_add(1,std::memory_order_relaxed);
             }else{nameFault.store(true);lastDrawFailure=progress;result=progress.nativeSafe?0:1;drawingErrors.fetch_add(1,std::memory_order_relaxed);mode.store(0);requested.store(0);}
-        }else if(intentionallyFiltered)filteredNames.fetch_add(1);
-        else rejected.fetch_add(1,std::memory_order_relaxed);
+        }else rejected.fetch_add(1,std::memory_order_relaxed);
     }
     return result;
 }
@@ -1118,7 +1110,7 @@ public:
             return levels.Outgoing(PacketValue<std::uint16_t>(data,8),PacketValue<std::uint32_t>(data,4),injected,blocked);
         // The normal position heartbeat supplies a bounded opportunity to check
         // one selected target. No render polling, extra actor scan, or worker.
-        if(id!=0x015||injected||blocked||!core_||!autoCheck.load()||!AnyRows(ShowLevel)||mode.load()<2||!LocalIdentity())return false;
+        if(id!=0x015||injected||blocked||!core_||!autoCheck.load()||!AnyRows(ShowLevel)||!mode.load()||!LocalIdentity())return false;
         Ashita::FFXI::targetentry_t target;
         if(!CheckTarget(target)||!levels.Prepare(target.Index,target.ServerId,GetTickCount64()))return false;
         std::uint8_t check[0x10]{};
@@ -1177,7 +1169,7 @@ public:
         PublishVisuals(options_);damageHookAttempted=false;
         damageAdjusted.store(0);damageRejected.store(0);
         mode.store(0);requested.store(options_.mode);
-        replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);filteredNames.store(0);
+        replaced.store(0);rejected.store(0);drawingErrors.store(0);healthNames.store(0);
         core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] Ready. /nplab opens nameplate settings; /nplab original restores native drawing.",Version);
         return true;
     }
@@ -1215,7 +1207,7 @@ public:
         if(!command||(_strnicmp(command,"/nplab",6)!=0)||(command[6]&&command[6]!=' '))return false;
         const char* option=command+6;while(*option==' ')++option;
         if(!*option||_stricmp(option,"config")==0){window_=!window_;if(!window_)Save();return true;}
-        if(_stricmp(option,"self")==0){SelectMode(1);}
+        if(_stricmp(option,"game")==0){SelectMode(1);}
         else if(_stricmp(option,"all")==0){SelectMode(2);}
         else if(_stricmp(option,"hp")==0){options_.drainRows|=EnemyDrainRows;ChangedVisuals();SelectMode(3);}
         else if(_stricmp(option,"original")==0||_stricmp(option,"off")==0){SelectMode(0);}
@@ -1293,12 +1285,11 @@ public:
             }else if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Use a factor from 0.25 to 3, for example /nplab size 1.2 or /nplab width 0.85.");
         }
         else if(_stricmp(option,"status")==0){
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Self":mode.load()>=2?"All":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
+            core_->GetChatManager()->Writef(207,false,"[NameplateLab %s] %s; size %.0f%% / width %.0f%%; widescreen %s; %s filtering; recreated %u names; HP-colored %u; fallbacks %u; drawing errors %u.",Version,mode.load()==1?"Game font":mode.load()>=2?"Custom font":nameFault.load()?"Suspended (drawing error)":"Original",options_.scale*100,options_.width*100,options_.correctAspect?"corrected":"native",options_.filter==1?"sharp":options_.filter==2?"smooth":"native",replaced.load(),healthNames.load(),rejected.load(),drawingErrors.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Name icons: %s.",options_.showStatusIcons?"detached left":"hidden");
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /nplab damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[NameplateLab] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
-            core_->GetChatManager()->Writef(207,false,"[NameplateLab] Intentionally filtered names: %u.",filteredNames.load());
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
         }else core_->GetChatManager()->Writef(207,false,"[NameplateLab] /nplab (settings) | self | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions|weakness|resistance on|off | damage <setting> | reset | status");
         Save();
@@ -1396,8 +1387,8 @@ public:
             if(gui->BeginTabBar("SettingsTabs")){
             if(gui->BeginTabItem("Names")){
             int selected=static_cast<int>((std::min)(requested.load(),2u));
-            if(gui->Combo("Restyle names",&selected,"Off (game's own)\0My name only\0All names\0"))SelectMode(static_cast<unsigned>(selected));
-            tip("Which names Nameplate Lab draws. Off leaves the game's own names, without any of the extras.");
+            if(gui->Combo("Restyle names",&selected,"Off\0Game font\0Custom font\0"))SelectMode(static_cast<unsigned>(selected));
+            tip("Off leaves the game's own names, without any of the extras. Game font keeps the game's own letters with all the extras. Custom font draws the letters in the font chosen on the Font tab.");
             gui->SeparatorText("Size");
             changed=percent("Size",options_.scale,25,300)||changed;
             tip("Overall size of names and everything shown with them.");
@@ -1642,7 +1633,7 @@ public:
             core_->GetChatManager()->Writef(207,false,"[NameplateLab] Original retained: %s.",lastProblem);return;
         }
         mode.store(next,std::memory_order_release);
-        core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s enabled. /nplab original switches back.",next==1?"Self recreation":"All-name recreation");
+        core_->GetChatManager()->Writef(207,false,"[NameplateLab] %s enabled. /nplab original switches back.",next==1?"Game font":"Custom font");
     }
 };
 }

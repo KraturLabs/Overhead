@@ -51,7 +51,7 @@ struct Options : Appearance {
     float growFarSize = 1; // Readability size at 25 yalms, relative to native full size.
     float damageScale = 1, damageWidth = 1;
     bool damageEnabled = false, damageCorrectAspect = false;
-    unsigned mode = 3;   // 0 original, 1 self, 2/3 all; HP drain is selected per row.
+    unsigned mode = 3;   // 0 original, 1 game font, 2/3 custom font; HP drain is selected per row.
 };
 bool ParseFactor(const char* text, float& value) noexcept;
 bool ValidOptions(const Options& value) noexcept;
