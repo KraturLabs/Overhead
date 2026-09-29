@@ -63,11 +63,13 @@ bool SizeScale(float& scaleX,float& scaleY,const Appearance& v) noexcept {
 bool SizeName(Input& input,const Appearance& v) noexcept {
     return SizeScale(input.scaleX,input.scaleY,v);
 }
-// Put the complete 4:3 screen correction into Width; retain native height.
+// Put the complete screen correction into Width so glyph art keeps its own
+// proportions (square icons stay square, as XIUI draws them); retain native height.
+// Measured in game 2026-09-28: at 5120x2160 the correct factor is 0.421875.
 bool OriginalWidth(unsigned screenWidth,unsigned screenHeight,float& width) noexcept {
     if(!screenWidth||!screenHeight
         ||screenWidth>65535||screenHeight>65535)return false;
-    const auto result=static_cast<float>((4.0/3.0)*screenHeight/screenWidth);
+    const auto result=static_cast<float>(static_cast<double>(screenHeight)/screenWidth);
     if(!std::isfinite(result)||result<.25f||result>3)return false;
     width=result;return true;
 }

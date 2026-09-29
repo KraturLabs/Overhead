@@ -746,6 +746,13 @@ bool ReadSizingReference(SizingReference& reference) noexcept {
     return OriginalWidth(reference.screenWidth,reference.screenHeight,reference.width);
 }
 
+// Icons use the full screen correction instead of Width, so only letters follow
+// Width. Legacy correction or an unreadable display keeps icons with the letters.
+bool IconRatio(nameplate_lab::Input& input,const Appearance& visuals) noexcept {
+    SizingReference reference;
+    input.iconRatio=!visuals.correctAspect&&visuals.width>0&&ReadSizingReference(reference)?reference.width/visuals.width:1;
+    return true;
+}
 using Submit=HRESULT(__thiscall*)(void*,D3DPRIMITIVETYPE,UINT,const void*,UINT);
 // Scope only our draw: never leave another UI element using our sampler choice.
 struct DrawProgress {
@@ -896,7 +903,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
         DebuffBounds bounds;
         const auto visuals=Visuals();
         intentionallyFiltered=false;
-        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&GrowName(input,resources.grow)
+        if(Collect(frame,input,resources,&icons,visuals.showStatusIcons)&&SizeName(input,visuals)&&IconRatio(input,visuals)&&GrowName(input,resources.grow)
             &&nameplate_lab::Build(input,output,&icons,&resources.level,&resources.traits,&resources.debuffs,&bounds,&resources.labels)){
             // Once drawing starts, do not redraw the original on top of a partial
             // replacement. A device error turns the feature off for future names.
@@ -1281,7 +1288,7 @@ public:
             gui->EndDisabled();
             if(canFit){
                 gui->Text("%ux%u baseline: Size 100%% / Width %.2f%%",reference.screenWidth,reference.screenHeight,reference.width*100);
-                gui->TextUnformatted("Matches 4:3 screen proportions; keeps native height.");
+                gui->TextUnformatted("Keeps the game art's own proportions on this screen; keeps native height.");
             }else gui->TextUnformatted("Resolution unavailable or outside the sizing range.");
             if(gui->Button("Reset appearance")){
                 options_.scale=1;options_.width=1;options_.correctAspect=false;options_.filter=2;options_.showStatusIcons=true;changed=true;

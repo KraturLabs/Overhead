@@ -67,6 +67,9 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     unsigned count = 0, nameCount = 0;
     if (!ExpandName(in, codes, count, nameCount, icons)) return false;
     const auto custom=[&](unsigned code){return in.font&&code>=text_font::First&&code<=text_font::Last;};
+    const float ratio=in.iconRatio>0&&in.iconRatio<=16?in.iconRatio:1;
+    // Icon x from its local x, scaled about a fixed anchor so the icon run keeps its attachment.
+    const auto iconX=[&](float anchor,float local){return anchor+(local-anchor)*ratio;};
     const auto available=[&](unsigned code){return custom(code)||validGlyph(in.glyphs[code]);};
     const auto glyphAdvance=[&](unsigned code){return custom(code)?in.font->glyphs[code-32].advance*in.font->unit:static_cast<float>(in.glyphs[code].width);};
     const auto kern=[&](unsigned a,unsigned b){return custom(a)&&custom(b)?in.font->kerning[a-32][b-32]*in.font->unit:0.f;};
@@ -168,9 +171,11 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             scale = 0.5; advance = 0; dx = -2-size.width; dy = -2;
         }
         const double leftExact = static_cast<double>(g.offsetX + dx) + pen;
-        const float left = rounded(leftExact);
+        // Detached icons narrow toward the name about the prefix's right end.
+        const float anchor=start-gap;
+        const float left = detached?iconX(anchor,rounded(leftExact)):rounded(leftExact);
         detailLeft=std::min(detailLeft,left);
-        const float right = rounded(leftExact + size.width * scale);
+        const float right = detached?iconX(anchor,rounded(leftExact + size.width * scale)):rounded(leftExact + size.width * scale);
         const float top = rounded(static_cast<double>(g.offsetY + dy) + line);
         const float bottom = rounded(static_cast<double>(rounded(size.height * scale)) + top);
         if(!detached&&(!nameSeen||top<nameTop)){nameTop=top;nameSeen=true;}
@@ -337,15 +342,16 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
                 const float barHeight=both?size:height*.5625f,barY=both?y:middle-barHeight*.5f+height*.05f;
                 const float iconGap=both?size*.1f:2*labels->traitScale*set.scale;
                 // Half-intensity tints under native 2x modulation, like the aggression bar.
-                atlasQuad(next,barY-.5f,2,barHeight+1,7,DetailAlpha);
-                atlasQuad(next+.5f,barY,1,barHeight,7,DetailAlpha|set.tint);
+                // Icon widths and gaps follow the icon ratio from the bar's left edge.
+                atlasQuad(next,barY-.5f,2*ratio,barHeight+1,7,DetailAlpha);
+                atlasQuad(iconX(next,next+.5f),barY,ratio,barHeight,7,DetailAlpha|set.tint);
                 float iconPen=next+(both?2+iconGap:4);
                 for(unsigned m=0;m<ModifierCount;++m){
                     if(!(set.mask&(1u<<m)))continue;
-                    atlasQuad(iconPen,y,size,size,8+m,DetailAlpha|0x808080u);
+                    atlasQuad(iconX(next,iconPen),y,size*ratio,size,8+m,DetailAlpha|0x808080u);
                     iconPen+=size+iconGap;
                 }
-                column=std::max(column,iconPen-iconGap-next);
+                column=std::max(column,(iconPen-iconGap-next)*ratio);
                 mark(first,set.bit);
                 top+=Two+RowGap;
             }
@@ -416,7 +422,11 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
         float right=detailLeft-glyphAdvance(32);
         const auto alpha=DetailAlpha;
         const auto first=out.count;
-        const auto& quad=atlasQuad;
+        // Traits run leftward from the first slot; widths and gaps follow the icon ratio.
+        const float anchor=right;
+        const auto quad=[&](float left,float y,float width,float height,unsigned cell,std::uint32_t color){
+            atlasQuad(iconX(anchor,left),y,width*ratio,height,cell,color);
+        };
         if(traits->bits&AggroKnown){
             // Quiet separator: one local pixel wide, 56% of the name height, centered
             // like the HP/MP/TP column (cell middle nudged down 5%). Not slider-sized.
@@ -437,7 +447,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
     }
     if(debuffs&&debuffs->count&&debuffs->count<=MaxDebuffs&&textReference){
         const float size=debuffs->size,iconGap=2;
-        const float width=debuffs->count*(size+iconGap)-iconGap;
+        const float width=(debuffs->count*(size+iconGap)-iconGap)*ratio;
         const float left=-width*.5f;
         float top=static_cast<float>(textTop);
         // Taller detached name icons sit off to the left; they do not lift the row.
@@ -447,7 +457,7 @@ bool Build(const Input& in, Output& out, const StatusIcons* icons, const LevelLa
             const auto cell=DebuffCell(debuffs->effects[i]);
             auto& q=out.quads[out.count++];q.code=0x300u+debuffs->effects[i];q.textureGroup=3;q.alphaReference=0;
             for(unsigned v=0;v<4;++v)q.vertices[v]={
-                in.x+in.scaleX*(left+i*(size+iconGap)+(v&1?size:0)),
+                in.x+in.scaleX*(left+(i*(size+iconGap)+(v&1?size:0))*ratio),
                 in.y+in.scaleY*(top+(v&2?size:0)),in.z,1,DetailAlpha|0x808080u,
                 (cell%16*32+(v&1?31.5f:.5f))/512,(cell/16*32+(v&2?31.5f:.5f))/256};
         }

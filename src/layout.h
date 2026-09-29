@@ -67,6 +67,9 @@ struct Input {
     std::uint8_t expansionBase[6], expansionCount[6];
     Glyph glyphs[256];
     const text_font::Font* font=nullptr; // Prepared text; native resources remain for symbols.
+    // Icon width relative to letter width (screen correction / Width); 0 means 1.
+    // Icons keep 4:3 proportions whatever Width does to the letters.
+    float iconRatio=0;
 };
 struct Vertex {
     float x, y, z, rhw;
