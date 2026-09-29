@@ -21,13 +21,11 @@ There's no server list. When it loads, the plugin finds the game code it needs i
 
 Settings save to `config/overhead/settings.ini` in your Ashita folder.
 
-**To update**, run `/unload overhead`, replace the DLL, then run `/load overhead`. Your settings are kept.
-
 ## What it shows
 
-**Names.** Letters are drawn in any font installed in Windows, with a black outline; the default is Tahoma Bold. You can also keep the game's own letters and still get all the details. Names hold a steady size instead of shaking as you move.
+**Names.** Letters are drawn in most fonts installed in Windows, with a black outline; the default is Tahoma Bold. You can also keep the game's own letters and still get all the details.
 
-**Monster level and check.** The level appears beside the name, for example `Lv.45`, with the check result above it in its check color: `TW`, `IEP`, `EP`, `DC`, `EM`, `T`, `VT` or `IT`. Your target is checked quietly in the background, so nothing appears in chat, and your own `/check` still works as usual. Widescan also fills in levels, shown in white until a check adds the difficulty. Until a monster's level is known it shows `Lv.??`, and monsters that are impossible to gauge show `Lv.???` with a magenta `NM` tag.
+**Monster level and check.** The level appears beside the name, for example `Lv.45`, with the check result above it in its check color: `TW`, `EP`, `DC`, `EM`, `T`, `VT` or `IT`. Your target is checked quietly in the background, so nothing appears in chat, and your own `/check` still works as usual. Widescan also fills in levels, shown in white until a check adds the difficulty. Until a monster's level is known it shows `Lv.??`, and monsters that are impossible to gauge show `Lv.???` with a magenta `NM` tag.
 
 ![A targeted monster: aggro icons, check and level, HP bar, weaknesses, HP% and distance](docs/images/target.png)
 
@@ -41,22 +39,22 @@ Settings save to `config/overhead/settings.ini` in your Ashita folder.
 
 **Weaknesses and resistances.** Weapon types and elements that deal extra damage (green bar) or reduced damage, including immunities (red bar), from the same database.
 
-**Debuffs.** A row of icons above the name, for monsters, yourself and your party. Your own and your party's debuffs come straight from the game. For monsters, the plugin tracks the debuffs it sees land and the messages that say they wore off. Movement ends Bind and Sleep. Durations are estimates based on each spell's base duration.
+**Debuffs.** A row of icons above the name, for monsters, yourself and your party. Your own and your party's debuffs come straight from the game. For monsters, the plugin tracks the debuffs it sees land and the messages that say they wore off. Durations are estimates based on each spell's base duration.
 
 **Actions.** TP moves and spells being readied or cast appear under the name, then turn green if they worked or red if they missed, were resisted or were interrupted. Your party's and alliance's spells, weapon skills and abilities show too.
 
 ![Debuffs above your name and a failed spell below it](docs/images/debuffs-action.png)
 
-**Player icons.** The icons the game shows beside player names (seeking party, away, linkshell, bazaar and others) move to the left of the name, so the name stays centered. By default, the linkshell and bazaar icons sit on the name's top-left and bottom-left corners, both at once.
+**Player icons.** The icons the game shows beside player names (seeking party, away, linkshell, bazaar, and others) were detached from the name, so the name stays centered under the cursor. By default, the linkshell and bazaar icons sit on the name's top-left and bottom-left corners, with an option to put restore the games default handling of the icons.
 
 **Target helpers**, all off by default:
 - **Enlarge far-away target** makes your target's name bigger when it's far away.
-- **Hide the game's target window** hides the target box without needing another addon.
+- **Hide the game's target window** hides the target box without needing another addon.  This also hides the target cursor, but Overhead replaces it.
 - **Keep the arrow over your target** keeps the game's bouncing arrow when the target window is hidden.
 
 **Damage numbers.** Resize them and fix widescreen stretch, separately from names. Off by default.
 
-**Points gained.** Experience, limit, capacity and exemplar points you earn float down from your name. Off by default.
+**Experience gained.** Experience, limit, capacity and exemplar points you earn float down from your name. Off by default.
 
 ## Settings window
 
@@ -71,10 +69,7 @@ By default, your target shows everything. You and your party show HP%, TP, debuf
 
 ## Compatibility
 
-- Unload the original **Nameplate** plugin.
-- If you use **BattleSight**, turn off its automatic checking (`/bs autocheck off`) and its cursor forcing, so the two don't overlap.
-- Chat addons such as SimpleLog work normally.
-- No game files are included or changed. Icons come from your own client, so icon replacement packs show up too.
+- Not compatible with the original **Nameplate** plugin.
 
 If something doesn't appear, `/overhead status` reports what the plugin is doing.
 
