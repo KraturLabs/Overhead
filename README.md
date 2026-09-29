@@ -4,7 +4,7 @@ An Ashita v4 plugin that restyles Final Fantasy XI's overhead names and adds com
 
 It draws with the game's own name placement, colors and fading, so names still sit where the game puts them. You can turn each detail on or off separately for your target, yourself, your party and monsters.
 
-Tested on Phoenix and HorizonXI with Ashita 4.30. On a client it doesn't recognize, the plugin refuses to load and leaves the game untouched.
+There's no server list. When it loads, the plugin finds the game code it needs in the running client, so it should work on any server that uses the standard FFXI client. It has been played on Phoenix and HorizonXI with Ashita 4.30. If it can't find the code it expects, for example on a modified client, it doesn't load and leaves the game untouched.
 
 ## Features
 
@@ -86,7 +86,7 @@ python -m venv .venv
 .\build.ps1
 ```
 
-The build writes `build/Release/overhead.dll`. `prepare-sdk.ps1` downloads the Ashita SDK headers pinned to commit `4171c74c8ddb2ca2a31654f199e6c1cee40d7256`. `prepare_profile.py` reads your own `FFXiMain.dll` without running or changing it, and generates local build inputs. At load time, the plugin finds the game routines it needs in the running client, so one DLL works across the supported clients.
+The build writes `build/Release/overhead.dll`. `prepare-sdk.ps1` downloads the Ashita SDK headers pinned to commit `4171c74c8ddb2ca2a31654f199e6c1cee40d7256`. `prepare_profile.py` reads your own `FFXiMain.dll` without running or changing it, and generates local build inputs. The build step accepts only the client versions listed in the script. The DLL it produces isn't tied to that version: at load time it finds the game code it needs in whatever client is running.
 
 ## Credits
 
