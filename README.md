@@ -2,77 +2,68 @@
 
 An Ashita v4 plugin that restyles Final Fantasy XI's overhead names and adds combat details to them: monster levels and check difficulty, HP, TP and MP, distance, aggro type, weaknesses and resistances, debuffs, and the action being readied or cast.
 
-It draws with the game's own name placement, colors and fading, so names still sit where the game puts them. You can turn each detail on or off separately for your target, yourself, your party and monsters.
+Names keep the game's own placement, colors and fading. You choose which details appear on your target, yourself, your party, and monsters depending on who's fighting them.
 
 There's no server list. When it loads, the plugin finds the game code it needs in the running client, so it should work on any server that uses the standard FFXI client. It has been played on Phoenix and HorizonXI with Ashita 4.30. If it can't find the code it expects, for example on a modified client, it doesn't load and leaves the game untouched.
-
-## Features
-
-- **Custom lettering**: any installed Windows font with a black outline, or the game's own font. Size, width, italic, outline thickness and edge softness are all adjustable, and there's a one-click fix for widescreen stretch.
-- **Monster levels**: the level appears next to the name, colored by check difficulty. Levels are checked silently in the background, and widescan fills them in too. Impossible-to-gauge monsters get a magenta `NM` tag.
-- **HP on the name**: lost HP dims the name, and HP% follows it in warning colors. TP, MP and distance can be shown too.
-- **Aggro icons**: sight, sound, magic, true sight, job ability, blood and link. Red means aggressive and blue means passive.
-- **Weaknesses and resistances**: weapon and element modifiers from MobDB.
-- **Debuffs**: an icon row above monsters, you and your party.
-- **Actions**: TP moves and spells being readied show under the name, then turn green or red depending on the result.
-- **Player icons**: status icons move to the side of the name so it stays centered. The linkshell and bazaar icons sit on the name's corners.
-- **Target helpers**: the far-away target is enlarged, the target window can be hidden, and the target arrow stays above the name.
-- **Damage numbers**: resize them separately from names.
-- **Experience points**: XP, LP, CP and EP gains scroll up from your own name.
 
 ## Install
 
 1. Download `overhead.dll` from the [latest release](../../releases/latest).
 2. Put it in your Ashita `plugins` folder.
 3. In game, run `/load overhead`. To load it every time, add `/load overhead` to your Ashita startup script (for example `scripts/default.txt`).
-4. Run `/overhead` to open the settings.
+4. Run `/overhead` to open the settings window. Every option is set there, and hovering any option explains it.
 
 Settings save to `config/overhead/settings.ini` in your Ashita folder.
 
-**To update**, run `/unload overhead`, replace the DLL, then run `/load overhead`. Your settings are kept. If an unload ever reports that the DLL was retained, close the game before replacing it.
+**To update**, run `/unload overhead`, replace the DLL, then run `/load overhead`. Your settings are kept.
 
-## Settings
+## What it shows
 
-`/overhead` opens a window with five tabs. Hover over any option to see what it does.
+**Names.** Letters are drawn in any font installed in Windows, with a black outline; the default is Tahoma Bold. You can also keep the game's own letters and still get all the details. Names hold a steady size instead of shaking as you move.
 
-- **Names**: which names get restyled (Off, Game font or Custom font), size and width, the widescreen fix, target options and player icons.
-- **Font**: font family, italic, outline, edge softness and letter scaling. Click **Apply font** to use your choices.
-- **Details**: a table of which details show on each kind of name (You, Target, Party/Alliance, the monster claim states and Other players), plus automatic level checks.
-- **Detail style**: preview, icon and text sizes, and which parts draw in front of scenery.
-- **Combat**: damage number size and the points-gained display.
+**Monster level and check.** The level appears beside the name, for example `Lv.45`, with the check result above it in its check color: `TW`, `IEP`, `EP`, `DC`, `EM`, `T`, `VT` or `IT`. Your target is checked quietly in the background, so nothing appears in chat, and your own `/check` still works as usual. Widescan also fills in levels, shown in white until a check adds the difficulty. Until a monster's level is known it shows `Lv.??`, and monsters that are impossible to gauge show `Lv.???` with a magenta `NM` tag.
 
-## Commands
+**HP.** The name doubles as an HP bar: the part matching lost HP is dimmed. HP% can follow the name, turning light yellow below 75%, orange below 50% and red below 25%. Player names also change color below 75% HP.
 
-| Command | What it does |
-|---|---|
-| `/overhead` | Open or close the settings window |
-| `/overhead status` | Show version and status |
-| `/overhead all` / `game` / `off` | Custom font, game font, or original names |
-| `/overhead hp` | Custom font with HP dimming on enemies |
-| `/overhead size <n>` / `width <n>` | Name size and width (0.25 to 3) |
-| `/overhead fit` | Fix widescreen stretch |
-| `/overhead reset` | Reset size and width |
-| `/overhead icons show\|hide` | Player status icons |
-| `/overhead levels\|traits\|health\|mp\|tp\|distance\|weakness\|resistance\|debuffs\|actions on\|off` | Turn a detail on or off for every kind of name |
-| `/overhead autocheck on\|off` | Silent automatic level checks |
-| `/overhead grow on\|off` | Enlarge far-away target |
-| `/overhead hidetarget on\|off` | Hide the game's target window |
-| `/overhead cursor on\|off` | Keep the arrow above your target |
-| `/overhead xp on\|off` | Show points gained at your name |
-| `/overhead damage on\|off\|fit\|retry` | Damage number resizing |
-| `/overhead damage size <n>` / `width <n>` | Damage number size and width |
+**TP, MP and distance.** TP and MP appear as percentages (100% TP is 1000 TP), and distance in yalms. MP only appears for jobs that use MP.
+
+**Aggro.** Icons for how a monster detects you: sight, true sight, sound, magic, job abilities, low HP (blood) and linking. A red strip means it attacks on its own and blue means it leaves you alone. These come from a monster database and show its usual habits, not what it's doing right now.
+
+**Weaknesses and resistances.** Weapon types and elements that deal extra damage (green bar) or reduced damage, including immunities (red bar), from the same database.
+
+**Debuffs.** A row of icons above the name, for monsters, yourself and your party. Your own and your party's debuffs come straight from the game. For monsters, the plugin tracks the debuffs it sees land and the messages that say they wore off. Movement ends Bind and Sleep. Durations are estimates based on each spell's base duration.
+
+**Actions.** TP moves and spells being readied or cast appear under the name, then turn green if they worked or red if they missed, were resisted or were interrupted. Your party's and alliance's spells, weapon skills and abilities show too.
+
+**Player icons.** The icons the game shows beside player names (seeking party, away, linkshell, bazaar and others) move to the left of the name, so the name stays centered. By default, the linkshell and bazaar icons sit on the name's top-left and bottom-left corners, both at once.
+
+**Target helpers**, all off by default:
+- **Enlarge far-away target** makes your target's name bigger when it's far away.
+- **Hide the game's target window** hides the target box without needing another addon.
+- **Keep the arrow over your target** keeps the game's bouncing arrow when the target window is hidden.
+
+**Damage numbers.** Resize them and fix widescreen stretch, separately from names. Off by default.
+
+**Points gained.** Experience, limit, capacity and exemplar points you earn float down from your name. Off by default.
+
+## Settings window
+
+- **Names**: restyle names (Off, Game font or Custom font), Size and Width, **Fix widescreen stretch**, target options and player icons.
+- **Font** (custom font only): the font, italic, outline, edge softness and letter scaling. Press **Apply font** to use your changes.
+- **Details**: a table of what shows on each kind of name. The rows are Target, You, Party/Alliance, monsters Claimed by you, Claimed by party, Claimed by others, and Unclaimed, plus Other players. A name uses the first row that fits it. Below the table are options for targeted NPCs, unclaimed monsters and automatic level checks.
+- **Detail style**: a preview on your target and yourself, sizes for icons and action text, and which parts show through scenery.
+- **Combat**: damage number size and points gained.
+
+By default, your target shows everything. You and your party show HP%, TP, debuffs and actions. Monsters show level, aggro, debuffs and actions, with the HP bar on.
 
 ## Compatibility
 
-- Unload the original **Nameplate** plugin and **FontProof**.
+- Unload the original **Nameplate** plugin.
 - If you use **BattleSight**, turn off its automatic checking (`/bs autocheck off`) and its cursor forcing, so the two don't overlap.
-- Chat addons such as SimpleLog work normally. Automatic checks stay silent, and your own `/check` still shows in chat.
+- Chat addons such as SimpleLog work normally.
+- No game files are included or changed. Icons come from your own client, so icon replacement packs show up too.
 
-## Notes
-
-- Levels come from checks and widescan while the plugin is loaded. Aggro, weakness and resistance data comes from MobDB and may differ on private servers.
-- Enemy debuffs are learned from combat messages seen while the plugin is loaded. Durations are estimates based on each spell's base duration.
-- No game files are included or changed. Status and name icons come from your own client, so icon packs such as XIPivot work.
+If something doesn't appear, `/overhead status` reports what the plugin is doing.
 
 ## Building from source
 
@@ -88,9 +79,11 @@ python -m venv .venv
 
 The build writes `build/Release/overhead.dll`. `prepare-sdk.ps1` downloads the Ashita SDK headers pinned to commit `4171c74c8ddb2ca2a31654f199e6c1cee40d7256`. `prepare_profile.py` reads your own `FFXiMain.dll` without running or changing it, and generates local build inputs. The build step accepts only the client versions listed in the script. The DLL it produces isn't tied to that version: at load time it finds the game code it needs in whatever client is running.
 
+The monster data in `src/trait_data.inc` and `src/trait_atlas.inc` is already generated. To regenerate it, run `tools/prepare_traits.py` on a MobDB checkout (needs Pillow).
+
 ## Credits
 
-Monster trait data and seven trait icons come from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330) under the [MIT license](licenses/MobDB.txt). The DLL also embeds that license notice.
+Monster aggro, weakness and resistance data and seven aggro icons come from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330) under the [MIT license](licenses/MobDB.txt). The DLL also embeds that license notice.
 
 ## License
 
