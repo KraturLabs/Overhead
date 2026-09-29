@@ -4,6 +4,12 @@ An Ashita v4 plugin that restyles Final Fantasy XI's overhead names and adds com
 
 Names keep the game's own placement, colors and fading. You choose which details appear on your target, yourself, your party, and monsters depending on who's fighting them.
 
+![Your name and your target with Overhead](docs/images/you-and-target.png)
+
+| Game's own name | With Overhead |
+|---|---|
+| ![Before](docs/images/before.png) | ![After](docs/images/after.png) |
+
 There's no server list. When it loads, the plugin finds the game code it needs in the running client, so it should work on any server that uses the standard FFXI client. It has been played on Phoenix and HorizonXI with Ashita 4.30. If it can't find the code it expects, for example on a modified client, it doesn't load and leaves the game untouched.
 
 ## Install
@@ -23,6 +29,10 @@ Settings save to `config/overhead/settings.ini` in your Ashita folder.
 
 **Monster level and check.** The level appears beside the name, for example `Lv.45`, with the check result above it in its check color: `TW`, `IEP`, `EP`, `DC`, `EM`, `T`, `VT` or `IT`. Your target is checked quietly in the background, so nothing appears in chat, and your own `/check` still works as usual. Widescan also fills in levels, shown in white until a check adds the difficulty. Until a monster's level is known it shows `Lv.??`, and monsters that are impossible to gauge show `Lv.???` with a magenta `NM` tag.
 
+![A targeted monster: aggro icons, check and level, HP bar, weaknesses, HP% and distance](docs/images/target.png)
+
+![Several monsters with their levels and details](docs/images/monsters.png)
+
 **HP.** The name doubles as an HP bar: the part matching lost HP is dimmed. HP% can follow the name, turning light yellow below 75%, orange below 50% and red below 25%. Player names also change color below 75% HP.
 
 **TP, MP and distance.** TP and MP appear as percentages (100% TP is 1000 TP), and distance in yalms. MP only appears for jobs that use MP.
@@ -34,6 +44,8 @@ Settings save to `config/overhead/settings.ini` in your Ashita folder.
 **Debuffs.** A row of icons above the name, for monsters, yourself and your party. Your own and your party's debuffs come straight from the game. For monsters, the plugin tracks the debuffs it sees land and the messages that say they wore off. Movement ends Bind and Sleep. Durations are estimates based on each spell's base duration.
 
 **Actions.** TP moves and spells being readied or cast appear under the name, then turn green if they worked or red if they missed, were resisted or were interrupted. Your party's and alliance's spells, weapon skills and abilities show too.
+
+![Debuffs above your name and a failed spell below it](docs/images/debuffs-action.png)
 
 **Player icons.** The icons the game shows beside player names (seeking party, away, linkshell, bazaar and others) move to the left of the name, so the name stays centered. By default, the linkshell and bazaar icons sit on the name's top-left and bottom-left corners, both at once.
 
@@ -50,7 +62,8 @@ Settings save to `config/overhead/settings.ini` in your Ashita folder.
 
 - **Names**: restyle names (Off, Game font or Custom font), Size and Width, **Fix widescreen stretch**, target options and player icons.
 - **Font** (custom font only): the font, italic, outline, edge softness and letter scaling. Press **Apply font** to use your changes.
-- **Details**: a table of what shows on each kind of name. The rows are Target, You, Party/Alliance, monsters Claimed by you, Claimed by party, Claimed by others, and Unclaimed, plus Other players. A name uses the first row that fits it. Below the table are options for targeted NPCs, unclaimed monsters and automatic level checks.
+- **Details**: a table of what shows on each kind of name. The rows are You, Target, Party/Alliance, monsters Claimed by you, Claimed by party, Claimed by others, and Unclaimed, plus Other players. A name uses the first row that fits it. Below the table are options for targeted NPCs, unclaimed monsters and automatic level checks.
+  ![The Details tab](docs/images/settings-details.png)
 - **Detail style**: a preview on your target and yourself, sizes for icons and action text, and which parts show through scenery.
 - **Combat**: damage number size and points gained.
 
