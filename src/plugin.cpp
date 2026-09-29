@@ -390,9 +390,12 @@ bool CheckNativeRange(unsigned index) noexcept {
     if(index==7&&actual[0]!=0xE9&&std::memcmp(actual,pattern.bytes,5))return false;
     return native_discovery::Matches(actual,pattern);
 }
-bool Compatible() noexcept {
+// Routines 3 and 4 belong to damage numbers only; a name install skips them so a
+// damage-site conflict cannot keep names from being reselected.
+bool Compatible(bool damage=true) noexcept {
     if(!clientBase||!HookRva)return Problem("native routine discovery failed or ambiguous");
-    for(unsigned i=0;i<6;++i)if(!CheckNativeRange(i))return Problem("unsupported or modified native rendering contract");
+    for(unsigned i=0;i<6;++i)
+        if((damage||(i!=3&&i!=4))&&!CheckNativeRange(i))return Problem("unsupported or modified native rendering contract");
     unsigned char bytes[6];
     if(!ReadBytes(clientBase+native.expansionBase,bytes,6)||std::memcmp(bytes,ExpansionBase,6)
         ||!ReadBytes(clientBase+native.expansionCount,bytes,6)||std::memcmp(bytes,ExpansionCount,6))
@@ -402,10 +405,15 @@ bool Compatible() noexcept {
 
 // Setup validates the complete profile. Steady rendering only checks ownership;
 // it does not continuously police unrelated bytes in already-validated routines.
-bool OwnsHooks() noexcept {
+// Names and damage are checked separately so a conflict disables only its feature.
+bool OwnsNameHook() noexcept {
     unsigned char site[6];
     if(hooked&&(!ReadBytes(clientBase+HookRva,site,6)||std::memcmp(site,patch,6)))
         return Problem("name hook ownership changed");
+    return true;
+}
+bool OwnsDamageHook() noexcept {
+    unsigned char site[6];
     if(damageHooked&&(!ReadBytes(clientBase+DamageRva,site,6)||std::memcmp(site,damagePatch,6)))
         return Problem("damage hook ownership changed");
     return true;
@@ -479,6 +487,7 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
 // Validate the exact native caller and its
 // stack-owned scale pair. No retained pointers, textures, or draw interception.
 unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
+    if(!damageEnabled.load())return 0;
     std::uint32_t caller=0,pair=0;
     float scales[2]{};
     if(!Read(frame,caller)||caller!=clientBase+native.damageCaller||!Read(frame+16,pair)
@@ -487,7 +496,6 @@ unsigned __stdcall AdjustDamage(std::uintptr_t frame) noexcept {
         ||scales[0]<=0||scales[1]<=0||scales[0]>128||scales[1]>128){
         damageRejected.fetch_add(1);return 0;
     }
-    if(!damageEnabled.load())return 0;
 
     Appearance options;options.scale=damageScale.load();options.width=damageWidth.load();
     options.correctAspect=damageCorrectAspect.load();
@@ -964,7 +972,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
 
 namespace {
 bool Install() {
-    if(!Compatible())return false;
+    if(!Compatible(false))return false;
     if(hooked)return true;
     if(!ExchangeSite(Original,patch))return false;
     hooked=true;return true;
@@ -1122,7 +1130,7 @@ public:
     const char* GetName()const override{return "NameplateLab";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Custom-font nameplates with sizing, native icons and enemy HP color fill";}
-    double GetVersion()const override{return 0.925;}
+    double GetVersion()const override{return 0.931;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -1493,10 +1501,6 @@ public:
             if(FAILED(debuffTextureResult))gui->TextUnformatted("Debuff artwork unavailable; reload the plugin to try again.");
             gui->EndTabItem();
             }
-            if(gui->BeginTabItem("Experimental")){
-            gui->TextUnformatted("Nothing here right now.");
-            gui->EndTabItem();
-            }
             gui->EndTabBar();
             }
             if(changed)ChangedVisuals();
@@ -1537,8 +1541,11 @@ public:
             if(!InstallCursor()){cursorReady=false;keepCursor=false;if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Cursor unavailable: %s",cursorProblem);}
         }
         if(saveFailed_)Save();
-        if((mode.load()||damageHooked)&&!OwnsHooks()){
+        if(damageHooked&&!damageFault.load()&&!OwnsDamageHook()){
             damageEnabled.store(false);damageFault.store(true);damageRetry_=false;
+            if(core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Damage adjustments disabled: %s. Names unaffected.",lastProblem);
+        }
+        if(mode.load()&&!OwnsNameHook()){
             requested.store(0);mode.store(0);
             if(!compatibilityFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[NameplateLab] Replacement disabled: %s.",lastProblem);
             compatibilityFailed_=true;return;

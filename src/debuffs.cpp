@@ -160,6 +160,7 @@ void Debuffs::Apply(unsigned index,std::uint32_t id,DebuffChange change,unsigned
         if(change!=DebuffChange::Add)return;
         row.id.store(0,std::memory_order_release);
         for(auto& item:row.effects)item.store(0,std::memory_order_relaxed);
+        row.watchFrom.store(0,std::memory_order_relaxed);
         row.id.store(id,std::memory_order_release);
     }
     if(change==DebuffChange::Defeat){row.id.store(0,std::memory_order_release);return;}
@@ -205,7 +206,7 @@ void Debuffs::Watch(unsigned index,std::uint32_t id,std::uint32_t millis,float x
     if(index>=0x900||!id)return;
     auto& row=rows_[index];
     if(row.id.load(std::memory_order_acquire)!=id)return;
-    const auto from=row.watchFrom.load(std::memory_order_acquire);
+    auto from=row.watchFrom.load(std::memory_order_acquire);
     if(!from||static_cast<std::int32_t>(millis-from)<0)return;
     if(row.anchoredFor.load(std::memory_order_relaxed)!=from){
         row.anchorX.store(x,std::memory_order_relaxed);row.anchorY.store(y,std::memory_order_relaxed);
@@ -226,6 +227,9 @@ void Debuffs::Watch(unsigned index,std::uint32_t id,std::uint32_t millis,float x
         const auto effect=static_cast<unsigned>(value)&0xFFFF;
         if(value&&(moved?heldInPlace(effect):heldFacing(effect)))item.compare_exchange_strong(value,0,std::memory_order_relaxed);
     }
+    // Moving ends every hold, so the watch retires; a turn alone may leave Bind or
+    // Stun to watch. A newer hold has re-armed it and keeps its own watch.
+    if(moved)row.watchFrom.compare_exchange_strong(from,0,std::memory_order_acq_rel);
 }
 DebuffRow Debuffs::Read(unsigned index,std::uint32_t id,std::uint32_t now) const noexcept {
     DebuffRow result;
