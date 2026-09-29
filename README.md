@@ -95,6 +95,8 @@ Monster aggro, weakness and resistance data and seven aggro icons come from [Tho
 
 Some debuff and action behavior follows ideas from two addons. [XIUI](https://github.com/tirem/XIUI) by tirem is the source for base spell durations and for handling immune and no-effect messages. [Bars](https://github.com/iLVL-Key/FFXI/tree/main/addons/Bars) by Key (Keylesta) is the source for clearing Bind and Sleep when a monster moves, and for the action result colors. No code from either is included.
 
+The screenshots use two game mods that aren't part of Overhead: [FFXI Icons HD](https://www.ffxiah.com/forum/topic/58015/reworking-icons-ui-hd) by Tetsouo for the status and debuff icons, and the game font from [xiPrime](https://www.ffxiah.com/forum/topic/57575/ffxi-hd-mods-xiprime) by Navius. Overhead uses whatever icons and font your game has installed.
+
 Overhead was built with the help of AI coding assistants (Claude and Codex).
 
 ## License
