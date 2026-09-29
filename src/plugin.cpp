@@ -870,23 +870,29 @@ bool Draw(const Output& output,const Resources& resources,unsigned* submitted=nu
         v[3]=q.vertices[1];v[4]=q.vertices[3];v[5]=q.vertices[2];
         return true;
     };
-    // Reuse the letter geometry with the atlas's black outline half. All outlines
-    // go first, so adjacent letters never cover each other's interiors; they share
-    // a submission with the letters that follow whenever the draw state matches.
-    if(resources.textOutline){
-        for(unsigned i=0;i<output.count;++i){
-            if(output.quads[i].textureGroup!=TextTexture)continue;
-            auto q=output.quads[i];
-            for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
-            if(!emit(q))return fail();
+    // Reuse the letter geometry with the atlas's black outline half. Two layers:
+    // the name and icons, then detail text (0x100 tag) such as the action, which
+    // can overlap the name. Within a layer all outlines go first, so adjacent
+    // letters never cover each other's interiors; a later layer's outline covers
+    // the name so overlapping text stays fully outlined. Draw state still batches.
+    const auto detail=[&](const Quad& q){return q.textureGroup==TextTexture&&(q.code&0x100u)!=0;};
+    for(unsigned layer=0;layer<2;++layer){
+        if(resources.textOutline){
+            for(unsigned i=0;i<output.count;++i){
+                if(output.quads[i].textureGroup!=TextTexture||detail(output.quads[i])!=(layer==1))continue;
+                auto q=output.quads[i];
+                for(auto& v:q.vertices){v.color&=0xFF000000u;v.u+=.5f;}
+                if(!emit(q))return fail();
+            }
         }
-    }
-    for(unsigned i=0;i<output.count;++i){
-        Quad pieces[2];
-        const auto* quads=&output.quads[i];
-        unsigned pieceCount=1;
-        if(health.enabled&&HealthLetter(*quads)){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
-        for(unsigned piece=0;piece<pieceCount;++piece)if(!emit(quads[piece]))return fail();
+        for(unsigned i=0;i<output.count;++i){
+            if(detail(output.quads[i])!=(layer==1))continue;
+            Quad pieces[2];
+            const auto* quads=&output.quads[i];
+            unsigned pieceCount=1;
+            if(health.enabled&&HealthLetter(*quads)){pieceCount=HealthQuads(*quads,health,pieces);quads=pieces;}
+            for(unsigned piece=0;piece<pieceCount;++piece)if(!emit(quads[piece]))return fail();
+        }
     }
     if(!flush()||!setFront(false))return fail();
     if(alpha&&!progress.Check(device->SetRenderState(D3DRS_ALPHAREF,0),"Restore ALPHAREF"))return finish(false);
