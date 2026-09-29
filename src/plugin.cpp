@@ -1403,6 +1403,10 @@ public:
             int selected=static_cast<int>((std::min)(requested.load(),2u));
             if(gui->Combo("Restyle names",&selected,"Off\0Game font\0Custom font\0"))SelectMode(static_cast<unsigned>(selected));
             tip("Off leaves the game's own names, without any of the extras. Game font keeps the game's own letters with all the extras. Custom font draws the letters in the font chosen on the Font tab.");
+            // Off draws the game's own names, so only the target window, arrow and damage
+            // number options (separate hooks) still apply; the rest is hidden.
+            const bool restyled=requested.load()!=0;
+            if(restyled){
             gui->SeparatorText("Size");
             changed=percent("Size",options_.scale,25,300)||changed;
             tip("Overall size of names and everything shown with them.");
@@ -1413,13 +1417,16 @@ public:
             if(gui->Button("Reset size")){options_.scale=1;options_.width=1;options_.correctAspect=false;changed=true;}
             tip("Size and Width back to 100%, matching the game's own names.");
             if(!canFit)gui->TextDisabled("Screen size unknown, so the widescreen fix is unavailable.");
+            }
             gui->SeparatorText("Target");
+            if(restyled){
             changed=gui->Checkbox("Enlarge far-away target",&options_.growTarget)||changed;
             tip("Makes your target's name bigger when it is far away. The extra size fades as you get closer and is gone by 3 yalms.");
             gui->Indent();gui->BeginDisabled(!options_.growTarget);
             changed=percent("Far-away size",options_.growFarSize,25,100)||changed;
             tip("Your target's name size beyond 25 yalms, compared with a full-size name up close. Names already bigger are left alone.");
             gui->EndDisabled();gui->Unindent();
+            }
             if(gui->Checkbox("Hide the game's target window",&options_.hideTarget)){
                 if(options_.hideTarget&&!options_.keepCursor){options_.keepCursor=true;cursorAttempted=false;}
                 changed=true;
@@ -1429,6 +1436,7 @@ public:
             tip("The game's bouncing arrow over your target goes away when the target window is hidden. This keeps it, with its usual animation and colors.");
             if(options_.keepCursor&&cursorAttempted&&!cursorReady)
                 gui->TextWrapped("The arrow isn't available right now; another plugin or addon may be handling it. /nplab status shows why.");
+            if(restyled){
             gui->SeparatorText("Player icons");
             changed=gui->Checkbox("Show player status icons",&options_.showStatusIcons)||changed;
             tip("The icons the game shows beside player names (linkshell, bazaar, seeking party, away and others), kept just left of the name so the name stays centered.");
@@ -1446,6 +1454,7 @@ public:
             if(gui->Button("Reset icon positions")){options_.linkshellX=options_.linkshellY=options_.bazaarX=options_.bazaarY=0;changed=true;}
             gui->EndDisabled();
             gui->EndDisabled();
+            }
             gui->EndTabItem();
             }
             // Font settings only apply to the custom font, so the tab is hidden otherwise.
@@ -1495,7 +1504,7 @@ public:
             tip("How letters and icons are resized on screen. Smooth blends their edges, Sharp keeps hard pixel edges, Game default uses the game's own setting. Changes right away.");
             gui->EndTabItem();
             }
-            if(gui->BeginTabItem("Details")){
+            if(requested.load()!=0&&gui->BeginTabItem("Details")){
             gui->TextWrapped("Choose what shows on each kind of name. A name uses the first row that fits it, from the top.");
             if(gui->BeginTable("PlateRows",ColumnCount+1,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_SizingFixedFit)){
                 header(true);
@@ -1528,7 +1537,7 @@ public:
             if(FAILED(debuffTextureResult))gui->TextWrapped("Debuff icons couldn't load; reload the plugin to try again.");
             gui->EndTabItem();
             }
-            if(gui->BeginTabItem("Detail style")){
+            if(requested.load()!=0&&gui->BeginTabItem("Detail style")){
             bool preview=previewDebuffs.load();
             if(gui->Checkbox("Preview on your target and yourself",&preview))previewDebuffs=preview;
             tip("Shows sample debuffs and a sample action (cycling white, green and red) on your target and yourself, so you can judge sizes. Not saved; turn it off to see real effects.");
@@ -1585,9 +1594,11 @@ public:
             }
             tip("Back to the game's own damage numbers.");
             if(!canFit)gui->TextDisabled("Screen size unknown, so the widescreen fix is unavailable.");
+            if(requested.load()!=0){
             gui->SeparatorText("Experience");
             changed=gui->Checkbox("Show points gained at your name",&options_.scrollXp)||changed;
             tip("Experience, limit, capacity and exemplar points you earn float down from your name and fade over 3 seconds.");
+            }
             gui->EndTabItem();
             }
             gui->EndTabBar();
