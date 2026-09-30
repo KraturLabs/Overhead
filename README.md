@@ -51,6 +51,7 @@ Settings save to `config/overhead/settings.ini` in your Ashita folder.
 - **Enlarge far-away target** makes your target's name bigger when it's far away.
 - **Hide the game's target window** hides the target box without needing another addon.  This also hides the target cursor, but Overhead replaces it.
 - **Keep the arrow over your target** keeps the game's bouncing arrow when the target window is hidden.
+- **Custom target arrow** replaces the game's arrow with a shimmering gold arrow in the same spot, drawn at full screen resolution. When you change targets it folds into a gold streak and glides to the new target, so you can see where your target is. Size, glide and glide time are adjustable. The sub-target arrow stays the game's, so its colors still show whether a target is valid.
 
 **Damage numbers.** Resize them and fix widescreen stretch, separately from names. Off by default.
 

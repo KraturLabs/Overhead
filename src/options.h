@@ -34,6 +34,10 @@ struct Options : Appearance {
     unsigned fontSoften=0; // 0 crisp; 1-2 blur the font texture slightly (setup only).
     bool keepCursor = false; // Opt-in native arrow when the target panel is hidden.
     bool hideTarget = false; // Hide the game's target window ourselves; HideParty optional.
+    bool customArrow = false; // Draw our gold arrow in place of the game's main target arrow.
+    float arrowSize = 1; // Relative to the game's arrow height (0.5-2).
+    bool arrowGlide = true; // Travel between targets instead of jumping.
+    unsigned arrowGlideMs = 550; // Travel time, 150-1100 ms.
     bool autoCheck = true;
     unsigned debuffSize = 16;
     unsigned rows[RowCount] = {DefaultRows[0],DefaultRows[1],DefaultRows[2],DefaultRows[3],DefaultRows[4],DefaultRows[5],DefaultRows[6],DefaultRows[7]};

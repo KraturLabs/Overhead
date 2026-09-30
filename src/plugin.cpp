@@ -23,6 +23,7 @@
 #include "traits.h"
 #include "trait_texture.h"
 #include "debuff_texture.h"
+#include "arrow_texture.h"
 #include "options.h"
 #include "native_discovery.h"
 #include <memory>
@@ -52,7 +53,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace overhead;
-constexpr char Version[]="0.9.32";
+constexpr char Version[]="0.9.34";
 text_font::Font textFont;
 IDirect3DTexture8* textTexture=nullptr;
 // Native icon expansion tables; setup requires exactly these values before any hook.
@@ -84,6 +85,29 @@ CursorClearance cursorClearance[2]; // Only current-scene, actually drawn overhe
 
 unsigned cursorDraws=0;
 char cursorProblem[160]="off";
+// Custom target arrow: our artwork in place of the game's main arrow, same anchor.
+std::atomic<bool> customArrow{false},arrowGlide{true},arrowFault{false};
+std::atomic<float> arrowSize{1};
+std::atomic<unsigned> arrowGlideMs{550};
+ArrowTexture arrowTexture;
+HRESULT arrowTextureResult=S_OK;
+ArrowMotion arrowMotion;
+unsigned arrowDraws=0;
+HRESULT arrowError=S_OK;
+// The game draws its menu layer at menu resolution and stretches it to the window,
+// so the arrow is placed during the menu pass (menu units) and drawn afterwards,
+// at full resolution, when the back-buffer scene ends. Only a frame whose menu pass
+// replaced the game's arrow draws one.
+struct ArrowPending { bool ready=false; ArrowKey key; float tipX=0,tipY=0,height=0,menuWidth=0,menuHeight=0; } arrowPending;
+// For /overhead status: the last attempt, what stopped it if it wasn't drawn, and its size.
+struct ArrowReport { unsigned attempts=0;const char* stop="not reached";float size=0; } arrowReport;
+// The cursor hook serves both the kept native arrow and the custom arrow.
+bool CursorWanted() noexcept {return keepCursor.load()||(customArrow.load()&&!arrowFault.load());}
+double ArrowMillis() noexcept {
+    static const double frequency=[]{LARGE_INTEGER f{};QueryPerformanceFrequency(&f);return f.QuadPart?static_cast<double>(f.QuadPart):1.0;}();
+    LARGE_INTEGER now{};QueryPerformanceCounter(&now);
+    return static_cast<double>(now.QuadPart)*1000.0/frequency;
+}
 std::atomic<bool> damageFault{false};
 std::atomic<bool> damageEnabled{false},damageCorrectAspect{false};
 std::atomic<float> damageScale{1},damageWidth{1};
@@ -168,6 +192,7 @@ TraitTexture traitTexture;
 HRESULT traitTextureResult=S_OK;
 void PublishVisuals(const Options& options) noexcept {
     keepCursor=options.keepCursor;hideTarget=options.hideTarget;
+    customArrow=options.customArrow;arrowSize=options.arrowSize;arrowGlide=options.arrowGlide;arrowGlideMs=options.arrowGlideMs;
     autoCheck=options.autoCheck;debuffSize=options.debuffSize;
     for(unsigned row=0;row<RowCount;++row){rowFeatures[row]=options.rows[row];rowFront[row]=options.front[row];}
     unclaimedDamagedOnly=options.unclaimedDamagedOnly;drainRows=options.drainRows;npcFeatures=options.npcFeatures;
@@ -237,7 +262,7 @@ void RefreshDetailTarget() noexcept {
     // each visible entity, so do not repeat entity/HP reads or cache pointers.
     detailTarget={};
     sceneCursorTargets[0]={};sceneCursorTargets[1]={};
-    const bool debuffCursor=(AnyRows(ShowDebuffs)||previewDebuffs.load())&&debuffTexture.value&&keepCursor.load();
+    const bool debuffCursor=(AnyRows(ShowDebuffs)||previewDebuffs.load())&&debuffTexture.value&&CursorWanted();
     if(!requested.load())return;
     std::uint32_t controller=0;
     Ashita::FFXI::targetentry_t target;
@@ -439,24 +464,120 @@ bool InstallCursor() noexcept {
 
 // The native UI dispatcher has already applied menu/cutscene filtering. Hidden
 // panel flags only suppress its frame and draw callback; we leave both untouched.
+// Draws the prepared arrow in the current UI pass. Every device state we touch is
+// captured first and restored afterwards, including stream 0 and the index buffer.
+// One reusable snapshot of the whole device state: created once, refreshed before
+// each draw and applied after it. A failed refresh (for example after a device
+// reset) recreates it once; unload deletes it.
+struct ArrowStateBlock {
+    IDirect3DDevice8* device=nullptr;
+    DWORD token=0;
+    bool Capture(IDirect3DDevice8* current) noexcept {
+        if(current==device&&token&&SUCCEEDED(arrowError=current->CaptureStateBlock(token)))return true;
+        Release();
+        if(FAILED(arrowError=current->CreateStateBlock(D3DSBT_ALL,&token))){token=0;return false;}
+        device=current;return true; // Creation captures the current state.
+    }
+    void Release() noexcept {if(device&&token)device->DeleteStateBlock(token);device=nullptr;token=0;}
+} arrowState;
+
+bool DrawCustomArrow(IDirect3DDevice8* device,const ArrowGeometry& g,float shimmer) noexcept {
+    if(!arrowState.Capture(device))return false;
+    IDirect3DVertexBuffer8* stream=nullptr;UINT stride=0;IDirect3DIndexBuffer8* indices=nullptr;UINT baseIndex=0;
+    device->GetStreamSource(0,&stream,&stride);device->GetIndices(&indices,&baseIndex);
+    HRESULT result=S_OK;
+    const auto check=[&](HRESULT value){if(SUCCEEDED(result)&&FAILED(value))result=value;};
+    const auto rs=[&](D3DRENDERSTATETYPE state,DWORD value){check(device->SetRenderState(state,value));};
+    const auto ts=[&](DWORD stage,D3DTEXTURESTAGESTATETYPE state,DWORD value){check(device->SetTextureStageState(stage,state,value));};
+    check(device->SetVertexShader(D3DFVF_XYZRHW|D3DFVF_DIFFUSE|D3DFVF_TEX2));
+    check(device->SetPixelShader(0));
+    rs(D3DRS_ALPHABLENDENABLE,TRUE);rs(D3DRS_SRCBLEND,D3DBLEND_ONE);rs(D3DRS_DESTBLEND,D3DBLEND_INVSRCALPHA);
+    rs(D3DRS_BLENDOP,D3DBLENDOP_ADD);rs(D3DRS_ALPHATESTENABLE,FALSE);rs(D3DRS_ZENABLE,D3DZB_FALSE);rs(D3DRS_ZWRITEENABLE,FALSE);
+    rs(D3DRS_CULLMODE,D3DCULL_NONE);rs(D3DRS_LIGHTING,FALSE);rs(D3DRS_FOGENABLE,FALSE);rs(D3DRS_SPECULARENABLE,FALSE);
+    rs(D3DRS_STENCILENABLE,FALSE);rs(D3DRS_FILLMODE,D3DFILL_SOLID);rs(D3DRS_COLORWRITEENABLE,0xF);
+    rs(D3DRS_TEXTUREFACTOR,static_cast<DWORD>(std::lround(std::clamp(shimmer,0.f,1.f)*255))<<24);
+    for(DWORD stage=0;stage<3;++stage){
+        check(device->SetTexture(stage,stage<2?arrowTexture.value:nullptr));
+        ts(stage,D3DTSS_TEXCOORDINDEX,stage==1?1:0);ts(stage,D3DTSS_TEXTURETRANSFORMFLAGS,D3DTTFF_DISABLE);
+        ts(stage,D3DTSS_ADDRESSU,D3DTADDRESS_CLAMP);ts(stage,D3DTSS_ADDRESSV,D3DTADDRESS_CLAMP);
+        ts(stage,D3DTSS_MINFILTER,D3DTEXF_LINEAR);ts(stage,D3DTSS_MAGFILTER,D3DTEXF_LINEAR);ts(stage,D3DTSS_MIPFILTER,D3DTEXF_LINEAR);
+    }
+    ts(3,D3DTSS_COLOROP,D3DTOP_DISABLE);ts(3,D3DTSS_ALPHAOP,D3DTOP_DISABLE);
+    // Plain parts: texture x diffuse. Shimmer parts: calm frame blended toward the
+    // peak frame by the texture factor, then x diffuse. Both frames share one alpha.
+    const auto plain=[&]{
+        ts(0,D3DTSS_COLOROP,D3DTOP_MODULATE);ts(0,D3DTSS_COLORARG1,D3DTA_TEXTURE);ts(0,D3DTSS_COLORARG2,D3DTA_DIFFUSE);
+        ts(0,D3DTSS_ALPHAOP,D3DTOP_MODULATE);ts(0,D3DTSS_ALPHAARG1,D3DTA_TEXTURE);ts(0,D3DTSS_ALPHAARG2,D3DTA_DIFFUSE);
+        ts(1,D3DTSS_COLOROP,D3DTOP_DISABLE);ts(1,D3DTSS_ALPHAOP,D3DTOP_DISABLE);
+    };
+    const auto shimmering=[&]{
+        ts(0,D3DTSS_COLOROP,D3DTOP_SELECTARG1);ts(0,D3DTSS_COLORARG1,D3DTA_TEXTURE);
+        ts(0,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);ts(0,D3DTSS_ALPHAARG1,D3DTA_TEXTURE);
+        ts(1,D3DTSS_COLOROP,D3DTOP_BLENDFACTORALPHA);ts(1,D3DTSS_COLORARG1,D3DTA_TEXTURE);ts(1,D3DTSS_COLORARG2,D3DTA_CURRENT);
+        ts(1,D3DTSS_ALPHAOP,D3DTOP_SELECTARG1);ts(1,D3DTSS_ALPHAARG1,D3DTA_CURRENT);
+        ts(2,D3DTSS_COLOROP,D3DTOP_MODULATE);ts(2,D3DTSS_COLORARG1,D3DTA_CURRENT);ts(2,D3DTSS_COLORARG2,D3DTA_DIFFUSE);
+        ts(2,D3DTSS_ALPHAOP,D3DTOP_MODULATE);ts(2,D3DTSS_ALPHAARG1,D3DTA_CURRENT);ts(2,D3DTSS_ALPHAARG2,D3DTA_DIFFUSE);
+    };
+    const auto draw=[&](unsigned first,unsigned count){
+        if(count&&SUCCEEDED(result))check(device->DrawPrimitiveUP(D3DPT_TRIANGLELIST,count/3,g.vertices+first,sizeof(ArrowVertex)));
+    };
+    unsigned first=0;
+    if(g.trail){plain();ts(2,D3DTSS_COLOROP,D3DTOP_DISABLE);ts(2,D3DTSS_ALPHAOP,D3DTOP_DISABLE);draw(first,g.trail);}
+    first+=g.trail;
+    shimmering();draw(first,g.body);first+=g.body;
+    if(g.glow){plain();ts(2,D3DTSS_COLOROP,D3DTOP_DISABLE);ts(2,D3DTSS_ALPHAOP,D3DTOP_DISABLE);draw(first,g.glow);}
+    first+=g.glow;
+    if(g.gem){shimmering();draw(first,g.gem);}
+    device->ApplyStateBlock(arrowState.token);
+    device->SetStreamSource(0,stream,stride);device->SetIndices(indices,baseIndex);
+    if(stream)stream->Release();
+    if(indices)indices->Release();
+    arrowError=result;
+    return SUCCEEDED(result);
+}
+
+// Draws the placed arrow on the back buffer at window resolution.
+void DrawPendingArrow(IDirect3DDevice8* device) noexcept {
+    const auto pending=arrowPending;arrowPending.ready=false;
+    if(!pending.ready||!device||arrowFault.load()||!customArrow.load()||!arrowTexture.value)return;
+    D3DVIEWPORT8 viewport{};
+    if(FAILED(device->GetViewport(&viewport))||!viewport.Width||!viewport.Height){arrowReport.stop="no back-buffer viewport";return;}
+    // Menu units span the whole back-buffer viewport, as the stretched menu layer does.
+    const float toX=viewport.Width/pending.menuWidth,toY=viewport.Height/pending.menuHeight;
+    const float tipX=viewport.X+pending.tipX*toX,tipY=viewport.Y+pending.tipY*toY;
+    // The approved art's visible height is 268 of its 300 px canvas.
+    const float size=pending.height*toY*300/268*arrowSize.load();
+    const double now=ArrowMillis();
+    const auto pose=arrowMotion.Update(pending.key,tipX,tipY,now,static_cast<float>(arrowGlideMs.load()),arrowGlide.load());
+    ArrowGeometry geometry;
+    if(BuildArrow(pose,size,geometry)&&DrawCustomArrow(device,geometry,ArrowShimmerWeight(now))){
+        ++arrowDraws;arrowReport.size=size;arrowReport.stop="drawn";
+    }else{arrowFault=true;cursorAttempted=false;} // The game's arrow returns from the next frame.
+}
+
 unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
-    if(!keepCursor||!cursorReady)return 0;
-    std::uint32_t window=0,controller=0;
+    const bool custom=customArrow.load()&&!arrowFault.load()&&arrowTexture.value;
+    if(!(keepCursor.load()||custom)||!cursorReady)return 0;
+    std::uint32_t window=0,controller=0,menuState=0;
     unsigned char callbackVisible=0;
     const bool hasClearance=cursorClearance[0].occupied||cursorClearance[1].occupied;
     if(!Read(menu+0x6A,callbackVisible))return 0;
-    if(callbackVisible&&!hasClearance)return 0; // Ordinary visible cursor needs no work.
+    if(callbackVisible&&!hasClearance&&!custom)return 0; // Ordinary visible cursor needs no work.
+    // The generic menu renderer suppresses callbacks in this inactive state,
+    // independently of the panel's visibility flags.
+    if(!Read(menu+0x10,menuState)||menuState==14)return 0;
     Ashita::FFXI::targetwindow_t state;
     Ashita::FFXI::targetentry_t targets[2];
     // The native gate already matched this menu's callback to the target window.
     if(!Read(menu+0xC,window)||!window||!ReadBytes(window,&state,sizeof(state))
         ||!Read(clientBase+native.targets,controller)||!controller
         ||!ReadBytes(controller,targets,sizeof(targets))||state.DeathFlag||state.m_AnkNum>=16)return 0;
-    // Target identities change on selection/despawn. These are live-data checks,
-    // confined to at most two arrows, not a scan of actors or names.
+    // Model-only targets (such as residence doors) have no entity/server id.
+    // Native target maintenance also skips entity validation for this type.
+    // Live entity checks remain confined to at most two arrows.
     if(!targets[0].IsActive||!targets[0].ActorPointer)return 0;
     for(unsigned i=0;i<(state.m_Sub?2u:1u);++i){
-        if(!targets[i].IsActive)continue;
+        if(!targets[i].IsActive||targets[i].IsModelActor)continue;
         std::uint32_t id=0;
         if(!targets[i].EntityPointer||!Read(targets[i].EntityPointer+0x78,id)||id!=targets[i].ServerId)return 0;
     }
@@ -468,30 +589,61 @@ unsigned __stdcall RenderCursorMenu(std::uintptr_t menu) noexcept {
         ||(modalMenu!=menu&&!(menuFlags&0x40))))return 0;
     const auto shape=state.m_pAnkShape[state.m_AnkNum];
     if(!shape)return 0; // Native resources can be absent during window teardown.
-    std::int16_t bottom=0;
-    if(hasClearance&&!Read(shape+0x26,bottom))return 0;
+    // The shape's bounds relative to its anchor: left, right, top, bottom (UI units).
+    // Live: the main arrow reads -10, 10, -32, 0 (20 wide, 32 tall, tip on the anchor).
+    std::int16_t box[4]{};
+    const bool boxRead=(hasClearance||custom)&&ReadBytes(shape+0x20,box,sizeof(box));
+    if(hasClearance&&!boxRead)return 0;
+    const std::int16_t bottom=box[3]; // +0x26, as the lift has always used.
+    // Name vertices use render-buffer pixels; cursor anchors use UI units.
+    // Read the current dimensions here so live UI/resolution changes agree.
+    std::uint16_t dimensions[6]{};
+    const bool haveDimensions=[&]{
+        std::uint32_t config=0;
+        return (hasClearance||custom)&&Read(clientBase+native.config,config)&&config&&ReadBytes(config+0x10,dimensions,sizeof(dimensions))
+            &&dimensions[2]&&dimensions[3]&&dimensions[4]&&dimensions[5];
+    }();
+    if(hasClearance&&!haveDimensions)return 0;
     float uiScaleX=1,uiScaleY=1;
-    if(hasClearance){
-        // Name vertices use render-buffer pixels; cursor anchors use UI units.
-        // Read the current dimensions here so live UI/resolution changes agree.
-        std::uint32_t config=0;std::uint16_t dimensions[6];
-        if(!Read(clientBase+native.config,config)||!config||!ReadBytes(config+0x10,dimensions,sizeof(dimensions))
-            ||!dimensions[2]||!dimensions[3]||!dimensions[4]||!dimensions[5])return 0;
+    if(haveDimensions){
         uiScaleX=static_cast<float>(dimensions[2])/dimensions[4];
         uiScaleY=static_cast<float>(dimensions[3])/dimensions[5];
     }
     const unsigned main=state.m_Sub?1u:0u;
     const int mainLift=cursorClearance[main].Lift(targets[main].ServerId,state.m_AnkY+bottom-0.5f,state.m_AnkX,uiScaleX,uiScaleY);
     const int subLift=state.m_Sub?cursorClearance[0].Lift(targets[0].ServerId,state.m_SubAnkY+bottom-0.5f,state.m_SubAnkX,uiScaleX,uiScaleY):0;
+    // The custom arrow replaces only the main arrow, which the game draws while
+    // m_AnkX is non-zero; the sub-target arrow keeps the game's validity colors.
+    // Anything unexpected leaves the game's own arrow in place for this frame.
+    const bool own=custom&&[&]{
+        auto& report=arrowReport;++report.attempts;
+        if(!state.m_AnkX){report.stop="game arrow off";return false;}
+        if(!boxRead){report.stop="arrow shape unreadable";return false;}
+        if(!haveDimensions){report.stop="menu size unreadable";return false;}
+        if(!(box[1]>box[0]&&box[3]>box[2]&&box[1]-box[0]<512&&box[3]-box[2]<512)){report.stop="arrow shape not a rectangle";return false;}
+        return true;
+    }();
     // Temporary coordinates affect only this call. Native animation, position
     // updates, resources and main/subtarget colors remain the client's own.
     auto* live=reinterpret_cast<Ashita::FFXI::targetwindow_t*>(window);
     if(mainLift)live->m_AnkY=static_cast<std::int16_t>((std::max)(-32768,static_cast<int>(state.m_AnkY)-mainLift));
     if(subLift)live->m_SubAnkY=static_cast<std::int16_t>((std::max)(-32768,static_cast<int>(state.m_SubAnkY)-subLift));
+    const std::int16_t anchorY=live->m_AnkY;
+    if(own)live->m_AnkX=0;
     reinterpret_cast<void(__thiscall*)(std::uintptr_t)>(clientBase+native.menuDraw)(menu);
     if(!callbackVisible){DrawNativeCursorTail(window,targets[0].ActorPointer);++cursorDraws;}
+    if(own)live->m_AnkX=state.m_AnkX;
     if(mainLift)live->m_AnkY=state.m_AnkY;
     if(subLift)live->m_SubAnkY=state.m_SubAnkY;
+    if(own){
+        // Config dimensions: window (0,1), menu resolution (2,3), background resolution (4,5).
+        // Arrow anchors are menu units; the tip is the bottom centre of the shape.
+        const auto& target=targets[main];
+        arrowPending={true,{target.ServerId,target.Index,static_cast<std::uint32_t>(target.ActorPointer)},
+            state.m_AnkX+(box[0]+box[1])*.5f,static_cast<float>(anchorY+box[3]),static_cast<float>(box[3]-box[2]),
+            static_cast<float>(dimensions[2]),static_cast<float>(dimensions[3])};
+        arrowReport.stop="placed";
+    }
     return 1;
 }
 
@@ -964,7 +1116,7 @@ unsigned __stdcall RenderName(std::uintptr_t frame) noexcept {
             DrawProgress progress;
             const bool drawn=Draw(output,resources,nullptr,visuals.filter,&progress);
             if(drawn){
-                if(bounds.occupied&&keepCursor.load(std::memory_order_relaxed))for(unsigned i=0;i<2;++i)
+                if(bounds.occupied&&CursorWanted())for(unsigned i=0;i<2;++i)
                     if(sceneCursorTargets[i].id==resources.identity.id&&sceneCursorTargets[i].index==resources.identity.index)
                     {
                         cursorClearance[i].IncludeBounds(resources.identity.id,bounds.top,bounds.left,bounds.right);
@@ -1139,7 +1291,7 @@ public:
     const char* GetName()const override{return "Overhead";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Custom-font nameplates with sizing, native icons and enemy HP color fill";}
-    double GetVersion()const override{return 0.932;}
+    double GetVersion()const override{return 0.934;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
@@ -1149,6 +1301,7 @@ public:
         if(!device)return false;
         traitTextureResult=traitTexture.Initialize(device);
         debuffTextureResult=debuffTexture.Initialize(device,core_?core_->GetResourceManager():nullptr);
+        arrowTextureResult=arrowTexture.Initialize(device);
         if(!ApplyFont(device,options_.fontOutline,options_.fontFamily,options_.fontItalic,options_.fontSoften)){
             if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] %s Using the default font when available.",fontError_);
             if(options_.fontFamily[0])ApplyFont(device,options_.fontOutline,"",options_.fontItalic,options_.fontSoften);
@@ -1212,7 +1365,7 @@ public:
                 reinterpret_cast<LPCWSTR>(&NameplateGate),&retainedModule);
             core_->GetChatManager()->Writef(207,false,"[Overhead] Unload could not detach safely (%s). Drawing disabled; DLL retained. Restart before replacing it.",lastProblem);
         }
-        if(detached){traitTexture.Release();debuffTexture.Release();if(textTexture){textTexture->Release();textTexture=nullptr;}}
+        if(detached){traitTexture.Release();debuffTexture.Release();arrowTexture.Release();arrowState.Release();arrowMotion.Reset();if(textTexture){textTexture->Release();textTexture=nullptr;}}
         debuffs.Clear();
         actions.Clear();
         xpFeed.Clear();
@@ -1305,11 +1458,18 @@ public:
             core_->GetChatManager()->Writef(207,false,"[Overhead] Name icons: %s.",options_.showStatusIcons?"detached left":"hidden");
             core_->GetChatManager()->Writef(207,false,"[Overhead] Damage %s; size %.0f%% / width %.2f%%; adjusted %u; rejected %u.",damageFault.load()?"unavailable (use /overhead damage retry)":damageHooked&&damageEnabled.load()?"enabled":options_.damageEnabled?"pending":"native",options_.damageScale*100,options_.damageWidth*100,damageAdjusted.load(),damageRejected.load());
             core_->GetChatManager()->Writef(207,false,"[Overhead] Cursor %s; forced native draws %u.",!options_.keepCursor?"off":!cursorAttempted?"pending":cursorReady&&keepCursor?"enabled":cursorProblem,cursorDraws);
+            core_->GetChatManager()->Writef(207,false,"[Overhead] Custom arrow %s; drawn %u of %u; last: %s; size %.0f px.",
+                !options_.customArrow?"off":FAILED(arrowTextureResult)?"artwork unavailable":arrowFault.load()?"stopped after a drawing error":!cursorReady?cursorProblem:"on",
+                arrowDraws,arrowReport.attempts,arrowReport.stop,arrowReport.size);
+            if(arrowFault.load())core_->GetChatManager()->Writef(207,false,"[Overhead] Custom arrow error 0x%08X; the game's arrow is back. Turn Custom target arrow off and on to retry.",static_cast<unsigned>(arrowError));
             if(drawingErrors.load())core_->GetChatManager()->Writef(207,false,"[Overhead] Last drawing error: %s failed (HRESULT 0x%08X), %u quads submitted in that name. Select a display mode to retry.",lastDrawFailure.operation,static_cast<unsigned>(lastDrawFailure.error),lastDrawFailure.submitted);
             core_->GetChatManager()->Writef(207,false,"[Overhead] Private glyph submission; shared entry %s.",submissionDetoured.load()?"detoured (left unchanged)":"native");
         }else core_->GetChatManager()->Writef(207,false,"[Overhead] /overhead (settings) | all | hp | original | size <factor> | width <factor> | fit | icons show|hide | cursor on|off | hidetarget on|off | xp on|off | grow on|off | levels on|off | autocheck on|off | traits|debuffs|health|mp|tp|distance|actions|weakness|resistance on|off | damage <setting> | reset | status");
         Save();
         return true;
+    }
+    void Direct3DEndScene(bool backBuffer)override{
+        if(backBuffer&&arrowPending.ready)DrawPendingArrow(core_?core_->GetDirect3DDevice():nullptr);
     }
     void Direct3DPresent(const RECT*,const RECT*,HWND,const RGNDATA*)override{
         if(!window_||!core_)return;
@@ -1438,6 +1598,23 @@ public:
             tip("The game's bouncing arrow over your target goes away when the target window is hidden. This keeps it, with its usual animation and colors.");
             if(options_.keepCursor&&cursorAttempted&&!cursorReady)
                 gui->TextWrapped("The arrow isn't available right now; another plugin or addon may be handling it. /overhead status shows why.");
+            if(gui->Checkbox("Custom target arrow",&options_.customArrow)){arrowFault=false;arrowMotion.Reset();cursorAttempted=false;changed=true;}
+            tip("Replaces the game's arrow over your target with a gold arrow that shimmers, in the same spot. The sub-target arrow stays the game's, so its colors still show whether a target is valid. Works with the target window shown or hidden.");
+            gui->Indent();gui->BeginDisabled(!options_.customArrow);
+            changed=percent("Arrow size",options_.arrowSize,50,200)||changed;
+            tip("Compared with the game's arrow.");
+            changed=gui->Checkbox("Glide between targets",&options_.arrowGlide)||changed;
+            tip("When you change targets, the arrow folds into a gold streak and travels to the new target instead of jumping, showing where your target is.");
+            gui->BeginDisabled(!options_.arrowGlide);
+            int glide=static_cast<int>(options_.arrowGlideMs);
+            if(gui->SliderInt("Glide time",&glide,150,1100,"%d ms",ImGuiSliderFlags_AlwaysClamp)){options_.arrowGlideMs=static_cast<unsigned>(glide);changed=true;}
+            tip("How long the trip takes, however far the new target is.");
+            gui->EndDisabled();
+            gui->EndDisabled();gui->Unindent();
+            if(options_.customArrow&&arrowFault.load())
+                gui->TextWrapped("The custom arrow stopped after a drawing problem, so the game's arrow is back. Turn it off and on to retry; /overhead status has details.");
+            else if(options_.customArrow&&FAILED(arrowTextureResult))
+                gui->TextWrapped("The custom arrow's artwork couldn't load; reload the plugin to try again.");
             if(restyled){
             gui->SeparatorText("Player icons");
             changed=gui->Checkbox("Show player status icons",&options_.showStatusIcons)||changed;
@@ -1631,16 +1808,16 @@ public:
                 keepCursor=false;cursorReady=false;cursorAttempted=true;strcpy_s(cursorProblem,"cursor hook ownership changed");
             }
         }
-        if(!keepCursor&&!cursorAttempted){
+        if(!CursorWanted()&&!cursorAttempted){
             cursorAttempted=true;
             if(cursorHooked){
                 if(ExchangeSite(cursorPatch,CursorOriginal,CursorRva,5)){cursorHooked=false;cursorReady=false;}
                 else strcpy_s(cursorProblem,lastProblem);
             }
         }
-        if(keepCursor&&!cursorAttempted){
+        if(CursorWanted()&&!cursorAttempted){
             cursorAttempted=true;
-            if(!InstallCursor()){cursorReady=false;keepCursor=false;if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Cursor unavailable: %s",cursorProblem);}
+            if(!InstallCursor()){cursorReady=false;keepCursor=false;customArrow=false;if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Cursor unavailable: %s",cursorProblem);}
         }
         if(saveFailed_)Save();
         if(damageHooked&&!damageFault.load()&&!OwnsDamageHook()){

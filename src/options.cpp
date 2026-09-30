@@ -31,7 +31,8 @@ bool ValidOptions(const Options& v) noexcept {
         &&std::isfinite(v.damageWidth)&&v.damageWidth>=.25f&&v.damageWidth<=3
         &&std::isfinite(v.growFarSize)&&v.growFarSize>=.25f&&v.growFarSize<=1&&v.fontOutline<=6&&v.fontSoften<=2&&v.drainRows<(1u<<RowCount)
         &&v.linkshellX>=-16&&v.linkshellX<=16&&v.linkshellY>=-16&&v.linkshellY<=16
-        &&v.bazaarX>=-16&&v.bazaarX<=16&&v.bazaarY>=-16&&v.bazaarY<=16;
+        &&v.bazaarX>=-16&&v.bazaarX<=16&&v.bazaarY>=-16&&v.bazaarY<=16
+        &&std::isfinite(v.arrowSize)&&v.arrowSize>=.5f&&v.arrowSize<=2&&v.arrowGlideMs>=150&&v.arrowGlideMs<=1100;
 }
 float GrowFactor(float nativeFactor,float distance,float farSize,float smoothedNative) noexcept {
     // Native factor is live stack data; zero cannot be divided out. Leave this
@@ -106,6 +107,15 @@ Options LoadOptions(const char* path) noexcept {
     out.filter=readChoice("Filter",2,2);
     out.keepCursor=readChoice("KeepCursor",0,1)!=0;
     out.hideTarget=readChoice("HideTarget",0,1)!=0;
+    out.customArrow=readChoice("CustomArrow",0,1)!=0;
+    {
+        float size=1;
+        GetPrivateProfileStringA("Nameplates","ArrowSize","1",text,sizeof(text),path);
+        if(ParseFactor(text,size))out.arrowSize=std::clamp(size,.5f,2.f);
+    }
+    out.arrowGlide=readChoice("ArrowGlide",1,1)!=0;
+    const auto glideMs=readChoice("ArrowGlideMs",550,1100);
+    out.arrowGlideMs=glideMs>=150?glideMs:550;
     out.showStatusIcons=readChoice("ShowStatusIcons",1,1)!=0;
     out.autoCheck=readChoice("AutoCheck",1,1)!=0;
     const auto debuffSize=readChoice("DebuffSize",16,24);
@@ -191,18 +201,20 @@ static bool WriteOptions(const char* path,const Options& value) noexcept {
     const auto ws=std::to_chars(weakScale,weakScale+sizeof(weakScale)-1,value.weakScale);
     const auto rs=std::to_chars(resistScale,resistScale+sizeof(resistScale)-1,value.resistScale);
     const auto ts=std::to_chars(traitScale,traitScale+sizeof(traitScale)-1,value.traitScale);
-    char growFarSize[32]{};
+    char growFarSize[32]{},arrowSize[32]{};
     const auto gm=std::to_chars(growFarSize,growFarSize+sizeof(growFarSize)-1,value.growFarSize);
-    if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||as.ec!=std::errc{}||ws.ec!=std::errc{}||rs.ec!=std::errc{}||ts.ec!=std::errc{}||gm.ec!=std::errc{})return false;
+    const auto az=std::to_chars(arrowSize,arrowSize+sizeof(arrowSize)-1,value.arrowSize);
+    if(ds.ec!=std::errc{}||dw.ec!=std::errc{}||as.ec!=std::errc{}||ws.ec!=std::errc{}||rs.ec!=std::errc{}||ts.ec!=std::errc{}||gm.ec!=std::errc{}||az.ec!=std::errc{})return false;
     char content[3072]{};
     const auto length=_snprintf_s(content,sizeof(content),_TRUNCATE,
-        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nAggroScale=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\nPinIcons=%u\r\nPinOnTop=%u\r\nLinkshellX=%d\r\nLinkshellY=%d\r\nBazaarX=%d\r\nBazaarY=%d\r\n",
+        "[Nameplates]\r\nScale=%s\r\nWidth=%s\r\nCorrectAspect=%u\r\nFilter=%s\r\nMode=%s\r\nDamageScale=%s\r\nDamageWidth=%s\r\nDamageEnabled=%u\r\nDamageCorrectAspect=%u\r\nShowStatusIcons=%u\r\nKeepCursor=%u\r\nHideTarget=%u\r\nAutoCheck=%u\r\nDebuffSize=%u\r\nRowTarget=%u\r\nRowSelf=%u\r\nRowParty=%u\r\nRowClaimedSelf=%u\r\nRowClaimedParty=%u\r\nRowClaimedOther=%u\r\nRowUnclaimed=%u\r\nUnclaimedDamagedOnly=%u\r\nDrainRows=%u\r\nActionScale=%s\r\nScrollXp=%u\r\nGrowTarget=%u\r\nGrowFarSize=%s\r\nFrontTarget=%u\r\nFrontSelf=%u\r\nFrontParty=%u\r\nFrontClaimedSelf=%u\r\nFrontClaimedParty=%u\r\nFrontClaimedOther=%u\r\nFrontUnclaimed=%u\r\nNpcFeatures=%u\r\nWeakScale=%s\r\nResistScale=%s\r\nAggroScale=%s\r\nFontOutline=%u\r\nFontFamily=%s\r\nFontItalic=%u\r\nRowOtherPlayers=%u\r\nFrontOtherPlayers=%u\r\nFontSoften=%u\r\nPinIcons=%u\r\nPinOnTop=%u\r\nLinkshellX=%d\r\nLinkshellY=%d\r\nBazaarX=%d\r\nBazaarY=%d\r\nCustomArrow=%u\r\nArrowSize=%s\r\nArrowGlide=%u\r\nArrowGlideMs=%u\r\n",
         scale,width,value.correctAspect?1u:0u,filter,mode,damageScale,damageWidth,
         value.damageEnabled?1u:0u,value.damageCorrectAspect?1u:0u,value.showStatusIcons?1u:0u,value.keepCursor?1u:0u,value.hideTarget?1u:0u,
         value.autoCheck?1u:0u,value.debuffSize,value.rows[0],value.rows[1],value.rows[2],value.rows[3],
         value.rows[4],value.rows[5],value.rows[6],value.unclaimedDamagedOnly?1u:0u,value.drainRows,actionScale,value.scrollXp?1u:0u,
         value.growTarget?1u:0u,growFarSize,value.front[0],value.front[1],value.front[2],value.front[3],
-        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften,value.pinIcons?1u:0u,value.pinOnTop?1u:0u,value.linkshellX,value.linkshellY,value.bazaarX,value.bazaarY);
+        value.front[4],value.front[5],value.front[6],value.npcFeatures?1u:0u,weakScale,resistScale,traitScale,value.fontOutline,value.fontFamily,value.fontItalic?1u:0u,value.rows[RowOtherPlayers],value.front[RowOtherPlayers],value.fontSoften,value.pinIcons?1u:0u,value.pinOnTop?1u:0u,value.linkshellX,value.linkshellY,value.bazaarX,value.bazaarY,
+        value.customArrow?1u:0u,arrowSize,value.arrowGlide?1u:0u,value.arrowGlideMs);
     if(length<0)return false;
     const auto file=CreateFileA(path,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return false;
