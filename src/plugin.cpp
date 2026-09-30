@@ -1,5 +1,5 @@
 // Independent prototype. Layout/drawing is ours; assets and scene placement are
-// supplied by the original game. MobDB trait data/artwork is embedded separately;
+// supplied by the original game. Phoenix trait data and MobDB artwork are embedded separately;
 // no addon/plugin implementation is incorporated.
 #include <Ashita.h>
 #include <atomic>
@@ -1534,8 +1534,8 @@ public:
                 {ShowDistance,"Distance","Distance in yalms."},
                 {ShowLevel,"Level","Monster level, colored by how tough it checks. Shows Lv.?? until known."},
                 {ShowTraits,"Aggro","How the monster notices you (sight, sound, magic and so on) and whether it attacks on its own (red) or leaves you alone (blue). These are its usual habits from a monster database, not what it is doing now."},
-                {ShowWeak,"Weak","Weapon types and elements that do extra damage to it (green bar), from a monster database."},
-                {ShowResist,"Resist","Weapon types and elements that do less damage to it, including immunities (red bar), from a monster database."},
+                {ShowWeak,"Weak","Weapon types and elements with explicit extra-damage modifiers (green bar) in the Phoenix database. Elemental resistance ranks are not shown."},
+                {ShowResist,"Resist","Weapon types and elements with explicit reduced-damage modifiers (red bar) in the Phoenix database. Elemental resistance ranks and status immunities are not shown."},
                 {ShowDebuffs,"Debuffs","Negative effects on it, such as poison, slow or sleep."},
                 {ShowAction,"Action","Abilities and spells being readied or cast, then the result: green if it worked, red if it failed."}};
             // The details table has a label column plus every column; the front table drops the HP bar.

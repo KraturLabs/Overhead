@@ -37,7 +37,7 @@ Settings save to `config/overhead/settings.ini` in your Ashita folder.
 
 **Aggro.** Icons for how a monster detects you: sight, true sight, sound, magic, job abilities, low HP (blood) and linking. A red strip means it attacks on its own and blue means it leaves you alone. These come from a monster database and show its usual habits, not what it's doing right now.
 
-**Weaknesses and resistances.** Weapon types and elements that deal extra damage (green bar) or reduced damage, including immunities (red bar), from the same database.
+**Weaknesses and resistances.** Weapon types and elements with explicit extra-damage (green bar) or reduced-damage (red bar) modifiers in the compiled Phoenix database. Elemental resistance ranks and status immunities are separate mechanics and are not displayed as damage modifiers.
 
 **Debuffs.** A row of icons above the name, for monsters, yourself and your party. Your own and your party's debuffs come straight from the game. For monsters, the plugin tracks the debuffs it sees land and the messages that say they wore off. Durations are estimates based on each spell's base duration.
 
@@ -88,11 +88,11 @@ python -m venv .venv
 
 The build writes `build/Release/overhead.dll`. `prepare-sdk.ps1` downloads the Ashita SDK headers pinned to commit `4171c74c8ddb2ca2a31654f199e6c1cee40d7256`. `prepare_profile.py` reads your own `FFXiMain.dll` without running or changing it, and generates local build inputs. The build step accepts only the client versions listed in the script. The DLL it produces isn't tied to that version: at load time it finds the game code it needs in whatever client is running.
 
-The monster data in `src/trait_data.inc` and `src/trait_atlas.inc` is already generated. To regenerate it, run `tools/prepare_traits.py` on a MobDB checkout (needs Pillow).
+The monster data in `src/trait_data.inc` is already generated from the standalone compiled Phoenix database. To regenerate it, run `python tools/prepare_phoenix_traits.py <Phoenix-MobDB/compiled>`. It uses the configured Phoenix overlays; this is a static reference, not a verified export of the running server. See [data provenance and limits](licenses/Phoenix-MobDB-SOURCE.md). Level labels still come from live check/widescan replies. The artwork in `src/trait_atlas.inc` is regenerated separately with `tools/prepare_traits.py` on the pinned MobDB checkout (needs Pillow).
 
 ## Credits
 
-Monster aggro, weakness and resistance data and seven aggro icons come from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330) under the [MIT license](licenses/MobDB.txt). The DLL also embeds that license notice.
+Monster data comes from [Phoenix](https://github.com/phoenixffxi/Phoenix/tree/5b1282e9277ebed506a9bd03490cbc6bc1cdd75b), with its [GPL-3.0 license](licenses/Phoenix-MobDB.txt) and [provenance](licenses/Phoenix-MobDB-SOURCE.md). Aggro and damage-type icons come from [ThornyFFXI/MobDB](https://github.com/ThornyFFXI/mobdb/tree/eee7e1ad5d0a49eb667f1f88602d9fce76276330) under the [MIT license](licenses/MobDB.txt). The DLL embeds both upstream notices.
 
 Some debuff and action behavior follows ideas from two addons. [XIUI](https://github.com/tirem/XIUI) by tirem is the source for base spell durations and for handling immune and no-effect messages. [Bars](https://github.com/iLVL-Key/FFXI/tree/main/addons/Bars) by Key (Keylesta) is the source for clearing Bind and Sleep when a monster moves, and for the action result colors. No code from either is included.
 
@@ -102,4 +102,4 @@ Overhead was built with the help of AI coding assistants (Claude and Codex).
 
 ## License
 
-Overhead is released under the [MIT license](LICENSE).
+Overhead's original code is under the [MIT license](LICENSE). The embedded Phoenix-derived data retains its [GPL-3.0 license](licenses/Phoenix-MobDB.txt); see the [data provenance](licenses/Phoenix-MobDB-SOURCE.md). MobDB artwork retains its MIT license.

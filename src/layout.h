@@ -47,7 +47,7 @@ struct SideLabels {
     TextLabel health, mp, tp, distance, action;
     FloatingLabel floating[MaxFloating];
     float scale=1, actionScale=.6f; // User factors relative to the name size.
-    // MobDB damage modifier bits (traits.h); each row's icons scale within its fixed slot.
+// Damage modifier bits (traits.h); each row's icons scale within its fixed slot.
     std::uint16_t weak=0, resist=0;
     float weakScale=1, resistScale=1, traitScale=1;
     // Parts drawn over world geometry, as DetailColumn bits; RowShow is the name.
