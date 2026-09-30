@@ -387,6 +387,15 @@ void HideTargetWindow(bool hide) noexcept {
     if(flags[0]||flags[1]){const unsigned char hidden[2]{};WriteBytes(menu+0x69,hidden,2);}
 }
 bool Problem(const char* value) { strcpy_s(lastProblem,value); return false; }
+// The Nameplate plugin patches the same name and damage routines; name it in
+// conflict messages so players know what to unload. A refused load leaves
+// Overhead unloaded, so only a running instance needs reloading.
+const char* ConflictHint(bool running=false) noexcept {
+    if(!GetModuleHandleW(L"nameplate.dll"))return "";
+    return running
+        ?" The Nameplate plugin is loaded and conflicts with Overhead: /unload nameplate, then /unload overhead and /load overhead."
+        :" The Nameplate plugin is loaded and conflicts with Overhead: /unload nameplate, then /load overhead.";
+}
 
 // Called at the render boundary (BeginScene setup / Ashita Present teardown).
 // No thread suspension: these sites execute synchronously in native drawing.
@@ -1217,7 +1226,7 @@ class Plugin final:public IPlugin {
             if(announce&&core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage retry succeeded; adjustments %s.",options_.damageEnabled?"enabled":"off in settings");
         }else {
             damageFault.store(true);damageEnabled.store(false);
-            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage unavailable: %s. Native damage retained.",lastProblem);
+            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage unavailable: %s. Native damage retained.%s",lastProblem,ConflictHint(true));
         }
     }
 public:
@@ -1325,9 +1334,9 @@ public:
         const auto party=memory?memory->GetParty():nullptr;
         traitZone.store(party?party->GetMemberZone(0):0);
         const auto module=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"FFXiMain.dll"));
-        if(!DiscoverNative(module)){core_->GetChatManager()->Writef(207,false,"[Overhead] Refused: native routine discovery failed or ambiguous.");return false;}
+        if(!DiscoverNative(module)){core_->GetChatManager()->Writef(207,false,"[Overhead] Refused: native routine discovery failed or ambiguous.%s",ConflictHint());return false;}
         ConfigureNative(module);
-        if(!Compatible()){core_->GetChatManager()->Writef(207,false,"[Overhead] Refused: %s.",lastProblem);return false;}
+        if(!Compatible()){core_->GetChatManager()->Writef(207,false,"[Overhead] Refused: %s.%s",lastProblem,ConflictHint());return false;}
         const char* root=core_->GetInstallPath();
         if(root&&_snprintf_s(settingsDirectory_,sizeof(settingsDirectory_),_TRUNCATE,"%s\\config\\overhead",root)>=0
             &&_snprintf_s(settingsPath_,sizeof(settingsPath_),_TRUNCATE,"%s\\settings.ini",settingsDirectory_)>=0)
@@ -1822,11 +1831,11 @@ public:
         if(saveFailed_)Save();
         if(damageHooked&&!damageFault.load()&&!OwnsDamageHook()){
             damageEnabled.store(false);damageFault.store(true);damageRetry_=false;
-            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage adjustments disabled: %s. Names unaffected.",lastProblem);
+            if(core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Damage adjustments disabled: %s. Names unaffected.%s",lastProblem,ConflictHint(true));
         }
         if(mode.load()&&!OwnsNameHook()){
             requested.store(0);mode.store(0);
-            if(!compatibilityFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Replacement disabled: %s.",lastProblem);
+            if(!compatibilityFailed_&&core_)core_->GetChatManager()->Writef(207,false,"[Overhead] Replacement disabled: %s.%s",lastProblem,ConflictHint(true));
             compatibilityFailed_=true;return;
         }
         compatibilityFailed_=false;
