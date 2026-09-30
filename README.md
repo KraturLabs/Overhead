@@ -102,4 +102,4 @@ Overhead was built with the help of AI coding assistants (Claude and Codex).
 
 ## License
 
-Overhead's original code is under the [MIT license](LICENSE). The embedded Phoenix-derived data retains its [GPL-3.0 license](licenses/Phoenix-MobDB.txt); see the [data provenance](licenses/Phoenix-MobDB-SOURCE.md). MobDB artwork retains its MIT license.
+Released builds of Overhead (`overhead.dll`) are distributed under the [GPL-3.0 license](licenses/Phoenix-MobDB.txt), because they include monster data from Phoenix, which is GPL-3.0; see the [data provenance](licenses/Phoenix-MobDB-SOURCE.md). The source code written for Overhead is also available under the [MIT license](LICENSE), and the MobDB artwork keeps its MIT license.
