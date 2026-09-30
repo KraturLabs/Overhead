@@ -53,7 +53,7 @@ __declspec(naked) void __fastcall DrawNativeCursorTail(std::uintptr_t, std::uint
 
 namespace {
 using namespace overhead;
-constexpr char Version[]="0.9.34";
+constexpr char Version[]="0.9.35";
 text_font::Font textFont;
 IDirect3DTexture8* textTexture=nullptr;
 // Native icon expansion tables; setup requires exactly these values before any hook.
@@ -1300,7 +1300,7 @@ public:
     const char* GetName()const override{return "Overhead";}
     const char* GetAuthor()const override{return "KraturLabs";}
     const char* GetDescription()const override{return "Custom-font nameplates with sizing, native icons and enemy HP color fill";}
-    double GetVersion()const override{return 0.934;}
+    double GetVersion()const override{return 0.935;}
     double GetInterfaceVersion()const override{return ASHITA_INTERFACE_VERSION;}
     // Block our automatic check replies before default-priority Addons can print
     // replacement chat. Manual replies remain available to their normal handlers.
