@@ -1,3 +1,4 @@
+# Builds build/Release/overhead.dll (32-bit, Release). Run prepare-sdk.ps1 first.
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {

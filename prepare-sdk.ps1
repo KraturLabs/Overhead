@@ -1,3 +1,4 @@
+# Downloads the pinned Ashita SDK headers into dependencies/sdk, needed before building.
 $ErrorActionPreference = 'Stop'
 $rootPath = $PSScriptRoot
 $commit = '4171c74c8ddb2ca2a31654f199e6c1cee40d7256'
