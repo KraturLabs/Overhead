@@ -100,6 +100,8 @@ for i,(rva,code,reloc) in enumerate(chunks):
             if base<=value<base+len(image) or external:mask[start+offset:start+offset+4]=b'\0'*4
     skip=7 if i==2 else 5 if i==7 else 0
     mask[:skip]=b'\0'*skip
+    # XIUI+ places a five-byte jmp at menu draw +0xE; plugin.cpp admits only that jmp or the original bytes.
+    if i==7:mask[0xE:0x13]=b'\0'*5
     anchor,length=max(((m.start(),len(m.group())) for m in re.finditer(b'\xff+',mask)),key=lambda x:x[1])
     for name,data in [('code',code),('mask',mask)]:
         out.append(f'inline constexpr unsigned char {name}{i}[]={{'+','.join(f'0x{x:02x}' for x in data)+'};')

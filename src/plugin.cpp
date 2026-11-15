@@ -62,6 +62,7 @@ native_discovery::Addresses native;
 std::uint32_t HookRva=0;
 std::uint32_t SubmitRva=0;
 constexpr std::uint32_t SubmitPrefixSize=7;
+constexpr std::uint32_t MenuBodyDetour=0xE; // XIUI+ jmp site inside menu draw.
 std::atomic<bool> submissionDetoured{false};
 constexpr unsigned char Original[6]={0x33,0xD2,0x33,0xED,0x33,0xF6};
 std::uintptr_t clientBase=0;
@@ -433,6 +434,9 @@ bool CheckNativeRange(unsigned index) noexcept {
         submissionDetoured.store(!original,std::memory_order_relaxed);
     }
     if(index==7&&actual[0]!=0xE9&&std::memcmp(actual,pattern.bytes,5))return false;
+    // XIUI+ detours menu draw +0xE (observed live 2026-11-15). Overhead patches the call
+    // to menu draw, not its body, so both chain; admit only that jmp or the original bytes.
+    if(index==7&&actual[MenuBodyDetour]!=0xE9&&std::memcmp(actual+MenuBodyDetour,pattern.bytes+MenuBodyDetour,5))return false;
     return native_discovery::Matches(actual,pattern);
 }
 // Routines 3 and 4 belong to damage numbers only; a name install skips them so a
